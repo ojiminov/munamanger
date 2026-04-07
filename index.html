@@ -77,7 +77,7 @@ const fromDB = {
   expense: r => ({ id:r.id, date:r.date, type:r.type, description:r.description, amountUZS:+r.amount_uzs||0, paidBy:r.paid_by||'' }),
 };
 const toDB = {
-  catalog: p => ({ brand:p.brand, name:p.name, category:p.category||null, skin_type:p.skinType||'All', weight_grams:+p.weightGrams||0, estimated_cost_krw:+p.estimatedCostKRW||0, estimated_shipping_krw:+p.estimatedShippingKRW||0, suggested_b2c_price_uzs:+p.suggestedB2CPrice||0, suggested_b2b_price_uzs:+p.suggestedB2BPrice||0, notes:p.notes||null }),
+  catalog: p => ({ brand:p.brand, name:p.name, category:p.category||null, skin_type:p.skinType||'All', weight_grams:+p.weightGrams||0, estimated_cost_krw:+p.estimatedCostKRW||0, suggested_b2c_price_uzs:+p.suggestedB2CPrice||0, suggested_b2b_price_uzs:+p.suggestedB2BPrice||0, notes:p.notes||null }),
   order:   o => ({ customer_name:o.customerName, product_id:o.productId||null, quantity:+o.quantity||1, price_uzs:+o.priceUZS||0, type:o.type||'B2C', status:o.status||'Pending', salesperson:o.salesperson||null, notes:o.notes||null }),
   expense: e => ({ date:e.date, type:e.type, description:e.description, amount_uzs:+e.amountUZS||0, paid_by:e.paidBy||null }),
 };
@@ -190,7 +190,7 @@ function App() {
   const [orders,   setOrders]   = useState([]);
   const [inventory,setInventory]= useState([]);
   const [expenses, setExpenses] = useState([]);
-  const [settings, setSettings] = useState(() => lsGet('settings', {krwToUsd:0.00073, uzsToUsd:0.000079, salespersons:['Amir','Zara','Dina','Kamol','Sher']}));
+  const [settings, setSettings] = useState(() => lsGet('settings', {shippingRateKRW:15000, uzsPerKrw:8, salespersons:['Amir','Zara','Dina','Kamol','Sher']}));
   const [loading,  setLoading]  = useState(true);
   const [toast,    setToast]    = useState({msg:'',type:'success'});
   const toastRef = useRef(null);
@@ -307,9 +307,11 @@ function DashboardPage({orders,catalog,expenses,settings}) {
 
     const totalCostKRW = orders.reduce((s,o)=>{
       const p = catalog.find(c=>c.id===o.productId);
-      return s + (p?(+p.estimatedCostKRW||0)+(+p.estimatedShippingKRW||0):0)*(+o.quantity||1);
+      if(!p) return s;
+      const shipping = (p.weightGrams/1000)*(+settings.shippingRateKRW||15000);
+      return s + ((+p.estimatedCostKRW||0) + shipping)*(+o.quantity||1);
     },0);
-    const totalCostUZS = totalCostKRW * (1/(+settings.krwToUsd||0.00073)) * (+settings.uzsToUsd||0.000079);
+    const totalCostUZS = totalCostKRW * (+settings.uzsPerKrw||8);
     const estimProfit  = totalRevUZS - totalCostUZS;
     const totalExpUZS  = expenses.reduce((s,e)=>s+(+e.amountUZS||0),0);
     const netProfit    = estimProfit - totalExpUZS;
@@ -534,7 +536,7 @@ function OrdersPage({orders,setOrders,catalog,settings,notify,updateOrderStatus}
                   <td className="font-semibold text-gray-700">{g.product?.brand||'—'}</td>
                   <td className="text-gray-800">{g.product?.name||'Unknown product'}</td>
                   <td className="font-black text-pink-600">{g.totalQty}</td>
-                  <td>{g.product?fmtKRW((+g.product.estimatedCostKRW+g.product.estimatedShippingKRW)*g.totalQty):'—'}</td>
+                  <td>{g.product?fmtKRW(((+g.product.estimatedCostKRW||0)+(g.product.weightGrams/1000)*(+settings.shippingRateKRW||15000))*g.totalQty):'—'}</td>
                   <td className="text-gray-400">{g.orders.length} order{g.orders.length!==1?'s':''}</td>
                 </tr>
               ))}
@@ -583,6 +585,7 @@ function OrdersPage({orders,setOrders,catalog,settings,notify,updateOrderStatus}
           order={editOrder}
           catalog={catalog}
           salespersons={salespersons}
+          settings={settings}
           onSave={saveOrder}
           saving={saving}
           onClose={()=>{setShowForm(false);setEditOrder(null);}}
@@ -592,7 +595,7 @@ function OrdersPage({orders,setOrders,catalog,settings,notify,updateOrderStatus}
   );
 }
 
-function OrderForm({order,catalog,salespersons,onSave,onClose,saving}) {
+function OrderForm({order,catalog,salespersons,settings,onSave,onClose,saving}) {
   const sp = salespersons?.length?salespersons:['—'];
   const [form,setForm] = useState({
     customerName: order?.customerName||'',
@@ -680,13 +683,19 @@ function OrderForm({order,catalog,salespersons,onSave,onClose,saving}) {
           </Sel>
         </div>
 
-        {selectedProduct&&(
-          <div className="bg-pink-50 rounded-xl px-3 py-2 text-xs text-gray-600 grid grid-cols-3 gap-2">
-            <div><span className="font-bold text-gray-500">Est. Cost</span><br/>{fmtKRW(selectedProduct.estimatedCostKRW)}</div>
-            <div><span className="font-bold text-gray-500">+ Shipping</span><br/>{fmtKRW(selectedProduct.estimatedShippingKRW)}</div>
-            <div><span className="font-bold text-gray-500">Weight</span><br/>{selectedProduct.weightGrams}g</div>
-          </div>
-        )}
+        {selectedProduct&&(()=>{
+          const shippingKRW = (selectedProduct.weightGrams/1000)*(+settings?.shippingRateKRW||15000);
+          const totalCostKRW = (+selectedProduct.estimatedCostKRW||0) + shippingKRW;
+          const profit = (+form.priceUZS||0) - totalCostKRW*(+settings?.uzsPerKrw||8);
+          return (
+            <div className="bg-pink-50 rounded-xl px-3 py-2 text-xs text-gray-600 grid grid-cols-4 gap-2">
+              <div><span className="font-bold text-gray-500">Product Cost</span><br/>{fmtKRW(selectedProduct.estimatedCostKRW)}</div>
+              <div><span className="font-bold text-gray-500">Shipping (auto)</span><br/>{fmtKRW(shippingKRW)}</div>
+              <div><span className="font-bold text-gray-500">Weight</span><br/>{selectedProduct.weightGrams}g</div>
+              <div><span className={`font-bold ${profit>=0?'text-green-600':'text-red-500'}`}>Est. Profit</span><br/><span className={profit>=0?'text-green-700':'text-red-600'}>{fmtUZS(profit)}</span></div>
+            </div>
+          );
+        })()}
 
         <div>
           <label className="block text-xs font-bold text-gray-500 mb-1">Notes</label>
@@ -701,7 +710,7 @@ function OrderForm({order,catalog,salespersons,onSave,onClose,saving}) {
 // ══════════════════════════════════════════════════════════════
 // CATALOG PAGE
 // ══════════════════════════════════════════════════════════════
-function CatalogPage({catalog,setCatalog,notify}) {
+function CatalogPage({catalog,setCatalog,settings,notify}) {
   const [search,    setSearch]    = useState('');
   const [catFilter, setCatFilter] = useState('All');
   const [showForm,  setShowForm]  = useState(false);
@@ -770,20 +779,28 @@ function CatalogPage({catalog,setCatalog,notify}) {
         ? <Empty icon="🗂️" title="No products found" sub="Add products to your catalog" action={<Btn onClick={()=>setShowForm(true)}>+ Add Product</Btn>}/>
         : <TblWrap>
             <thead><tr>
-              <th>Brand</th><th>Name</th><th>Category</th><th>Skin</th><th>Cost (KRW)</th><th>Ship (KRW)</th><th>B2C (UZS)</th><th>B2B (UZS)</th><th>Weight</th><th></th>
+              <th>Brand</th><th>Name</th><th>Category</th><th>Skin</th><th>Weight</th><th>Cost (KRW)</th><th>Ship (KRW)</th><th>B2C Price</th><th>B2C Profit</th><th>B2B Price</th><th>B2B Profit</th><th></th>
             </tr></thead>
             <tbody>
-              {filtered.map(p=>(
+              {filtered.map(p=>{
+                const shippingKRW = (p.weightGrams/1000)*(+settings.shippingRateKRW||15000);
+                const rate = +settings.uzsPerKrw||8;
+                const totalCostKRW = (+p.estimatedCostKRW||0) + shippingKRW;
+                const b2cProfit = (+p.suggestedB2CPrice||0) - totalCostKRW*rate;
+                const b2bProfit = (+p.suggestedB2BPrice||0) - totalCostKRW*rate;
+                return (
                 <tr key={p.id}>
                   <td className="font-bold text-pink-600">{p.brand}</td>
-                  <td className="font-semibold text-gray-800 max-w-[200px]"><span className="truncate block" title={p.name}>{p.name}</span></td>
+                  <td className="font-semibold text-gray-800 max-w-[180px]"><span className="truncate block" title={p.name}>{p.name}</span></td>
                   <td><span className="text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full font-semibold">{p.category||'—'}</span></td>
                   <td className="text-xs text-gray-500">{p.skinType}</td>
+                  <td className="text-gray-500 text-xs">{p.weightGrams}g</td>
                   <td className="font-semibold text-gray-700">{fmtKRW(p.estimatedCostKRW)}</td>
-                  <td className="text-gray-500">{fmtKRW(p.estimatedShippingKRW)}</td>
+                  <td className="text-blue-500 text-xs italic">{fmtKRW(shippingKRW)} <span className="text-gray-300">auto</span></td>
                   <td className="font-bold text-emerald-600">{fmtUZS(p.suggestedB2CPrice)}</td>
+                  <td className={`font-bold text-xs ${b2cProfit>=0?'text-emerald-700':'text-red-500'}`}>{fmtUZS(b2cProfit)}</td>
                   <td className="font-bold text-indigo-600">{fmtUZS(p.suggestedB2BPrice)}</td>
-                  <td className="text-gray-500">{p.weightGrams}g</td>
+                  <td className={`font-bold text-xs ${b2bProfit>=0?'text-indigo-700':'text-red-500'}`}>{fmtUZS(b2bProfit)}</td>
                   <td>
                     <div className="flex gap-1">
                       <Btn size="xs" variant="ghost" onClick={()=>{setEditProd(p);setShowForm(true);}}>✎</Btn>
@@ -791,25 +808,33 @@ function CatalogPage({catalog,setCatalog,notify}) {
                     </div>
                   </td>
                 </tr>
-              ))}
+                );
+              })}
             </tbody>
           </TblWrap>
       }
 
-      {showForm&&<ProductForm product={editProd} onSave={save} saving={saving} onClose={()=>{setShowForm(false);setEditProd(null);}}/>}
+      {showForm&&<ProductForm product={editProd} settings={settings} onSave={save} saving={saving} onClose={()=>{setShowForm(false);setEditProd(null);}}/>}
     </div>
   );
 }
 
-function ProductForm({product,onSave,onClose,saving}) {
+function ProductForm({product,settings,onSave,onClose,saving}) {
   const [form,setForm] = useState({
     brand:product?.brand||'',name:product?.name||'',category:product?.category||'Serum',
     skinType:product?.skinType||'All',weightGrams:product?.weightGrams||0,
-    estimatedCostKRW:product?.estimatedCostKRW||'',estimatedShippingKRW:product?.estimatedShippingKRW||'',
+    estimatedCostKRW:product?.estimatedCostKRW||'',
     suggestedB2CPrice:product?.suggestedB2CPrice||'',suggestedB2BPrice:product?.suggestedB2BPrice||'',
     notes:product?.notes||'',
   });
   const f=(k,v)=>setForm(p=>({...p,[k]:v}));
+
+  const shippingKRW = (form.weightGrams/1000)*(+settings?.shippingRateKRW||15000);
+  const rate        = +settings?.uzsPerKrw||8;
+  const totalCostKRW= (+form.estimatedCostKRW||0) + shippingKRW;
+  const b2cProfit   = (+form.suggestedB2CPrice||0) - totalCostKRW*rate;
+  const b2bProfit   = (+form.suggestedB2BPrice||0) - totalCostKRW*rate;
+
   const submit=()=>{ if(!form.brand.trim()||!form.name.trim()) return alert('Brand and name required.'); onSave(form); };
   return (
     <Modal title={product?'Edit Product':'Add Product'} onClose={onClose} wide>
@@ -824,12 +849,27 @@ function ProductForm({product,onSave,onClose,saving}) {
           <Inp label="Weight (g)" type="number" min="0" value={form.weightGrams} onChange={e=>f('weightGrams',e.target.value)} placeholder="100"/>
         </div>
         <div className="grid grid-cols-2 gap-3">
-          <Inp label="Est. Cost (KRW)" type="number" min="0" value={form.estimatedCostKRW} onChange={e=>f('estimatedCostKRW',e.target.value)} placeholder="18000"/>
-          <Inp label="Est. Shipping (KRW)" type="number" min="0" value={form.estimatedShippingKRW} onChange={e=>f('estimatedShippingKRW',e.target.value)} placeholder="3000"/>
+          <Inp label="Product Cost (KRW)" required type="number" min="0" value={form.estimatedCostKRW} onChange={e=>f('estimatedCostKRW',e.target.value)} placeholder="18000"/>
+          <div className="bg-blue-50 border border-blue-100 rounded-xl px-3 py-2 flex flex-col justify-center">
+            <p className="text-xs font-bold text-blue-400 mb-0.5">Shipping Cost (KRW) — auto</p>
+            <p className="text-sm font-black text-blue-700">{fmtKRW(shippingKRW)}</p>
+            <p className="text-xs text-blue-300">{form.weightGrams||0}g × ₩{(+settings?.shippingRateKRW||15000).toLocaleString()}/kg</p>
+          </div>
         </div>
         <div className="grid grid-cols-2 gap-3">
-          <Inp label="B2C Price (UZS)" type="number" min="0" value={form.suggestedB2CPrice} onChange={e=>f('suggestedB2CPrice',e.target.value)} placeholder="280000"/>
-          <Inp label="B2B Price (UZS)" type="number" min="0" value={form.suggestedB2BPrice} onChange={e=>f('suggestedB2BPrice',e.target.value)} placeholder="220000"/>
+          <Inp label="B2C Selling Price (UZS)" required type="number" min="0" value={form.suggestedB2CPrice} onChange={e=>f('suggestedB2CPrice',e.target.value)} placeholder="280000"/>
+          <Inp label="B2B Selling Price (UZS)" type="number" min="0" value={form.suggestedB2BPrice} onChange={e=>f('suggestedB2BPrice',e.target.value)} placeholder="220000"/>
+        </div>
+        {/* Auto-calculated profit preview */}
+        <div className="grid grid-cols-2 gap-3">
+          <div className={`rounded-xl px-3 py-2 ${b2cProfit>=0?'bg-emerald-50 border border-emerald-100':'bg-red-50 border border-red-100'}`}>
+            <p className={`text-xs font-bold mb-0.5 ${b2cProfit>=0?'text-emerald-500':'text-red-400'}`}>B2C Profit — auto</p>
+            <p className={`text-sm font-black ${b2cProfit>=0?'text-emerald-700':'text-red-600'}`}>{fmtUZS(b2cProfit)}</p>
+          </div>
+          <div className={`rounded-xl px-3 py-2 ${b2bProfit>=0?'bg-indigo-50 border border-indigo-100':'bg-red-50 border border-red-100'}`}>
+            <p className={`text-xs font-bold mb-0.5 ${b2bProfit>=0?'text-indigo-500':'text-red-400'}`}>B2B Profit — auto</p>
+            <p className={`text-sm font-black ${b2bProfit>=0?'text-indigo-700':'text-red-600'}`}>{fmtUZS(b2bProfit)}</p>
+          </div>
         </div>
         <div>
           <label className="block text-xs font-bold text-gray-500 mb-1">Notes</label>
@@ -1036,24 +1076,36 @@ function ExpenseForm({expense,onSave,saving,salespersons}) {
 // SETTINGS PAGE
 // ══════════════════════════════════════════════════════════════
 function SettingsPage({settings,setSettings,notify}) {
-  const [krw,  setKrw]  = useState(settings.krwToUsd);
-  const [uzs,  setUzs]  = useState(settings.uzsToUsd);
-  const [spTxt,setSpTxt]= useState((settings.salespersons||[]).join(', '));
+  const [shipRate, setShipRate] = useState(settings.shippingRateKRW||15000);
+  const [uzsPerKrw,setUzsPerKrw]= useState(settings.uzsPerKrw||8);
+  const [spTxt,    setSpTxt]    = useState((settings.salespersons||[]).join(', '));
 
   const save=()=>{
-    setSettings({...settings,krwToUsd:+krw,uzsToUsd:+uzs,salespersons:spTxt.split(',').map(s=>s.trim()).filter(Boolean)});
+    setSettings({...settings, shippingRateKRW:+shipRate, uzsPerKrw:+uzsPerKrw, salespersons:spTxt.split(',').map(s=>s.trim()).filter(Boolean)});
     notify('Settings saved ✓');
   };
 
   return (
     <div className="max-w-lg space-y-4 slide-up">
       <h2 className="font-black text-gray-800 text-xl">Settings</h2>
-      <Card className="p-4 space-y-3">
-        <p className="font-extrabold text-gray-700">Exchange Rates</p>
-        <Inp label="KRW → USD (e.g. 0.00073)" type="number" step="0.000001" value={krw} onChange={e=>setKrw(e.target.value)}/>
-        <p className="text-xs text-gray-400">₩1,000 = ${(1000*(+krw||0)).toFixed(3)}</p>
-        <Inp label="UZS → USD (e.g. 0.000079)" type="number" step="0.0000001" value={uzs} onChange={e=>setUzs(e.target.value)}/>
-        <p className="text-xs text-gray-400">100,000 UZS = ${(100000*(+uzs||0)).toFixed(2)}</p>
+      <Card className="p-4 space-y-4">
+        <p className="font-extrabold text-gray-700">Rates & Currency</p>
+
+        <div>
+          <Inp label="Shipping Rate (KRW per kg)" type="number" min="0" value={shipRate} onChange={e=>setShipRate(e.target.value)} placeholder="15000"/>
+          <p className="text-xs text-gray-400 mt-1">
+            Example: 100g product → ₩{Math.round((100/1000)*(+shipRate||15000)).toLocaleString()} shipping &nbsp;·&nbsp;
+            500g → ₩{Math.round((500/1000)*(+shipRate||15000)).toLocaleString()}
+          </p>
+        </div>
+
+        <div>
+          <Inp label="Exchange Rate (UZS per 1 KRW)" type="number" min="0" step="0.1" value={uzsPerKrw} onChange={e=>setUzsPerKrw(e.target.value)} placeholder="8"/>
+          <p className="text-xs text-gray-400 mt-1">
+            ₩1,000 = {Math.round(1000*(+uzsPerKrw||8)).toLocaleString()} UZS &nbsp;·&nbsp;
+            ₩10,000 = {Math.round(10000*(+uzsPerKrw||8)).toLocaleString()} UZS
+          </p>
+        </div>
       </Card>
       <Card className="p-4 space-y-3">
         <p className="font-extrabold text-gray-700">Team (Salespersons)</p>
