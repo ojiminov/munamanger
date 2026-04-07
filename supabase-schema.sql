@@ -1,61 +1,83 @@
 -- ============================================================
--- KBeauty Manager — Supabase Database Schema
--- Run this entire file in: Supabase Dashboard → SQL Editor → New Query
+-- MUNA MANAGER — Supabase Schema v3.0
+-- Run this in: Supabase → SQL Editor → New Query → Run
 -- ============================================================
 
--- 1. CUSTOMERS
-CREATE TABLE customers (
-  id           UUID DEFAULT gen_random_uuid() PRIMARY KEY,
-  name         TEXT NOT NULL,
-  phone        TEXT,
-  address      TEXT,
-  created_at   TIMESTAMPTZ DEFAULT NOW()
+-- ─── PRODUCT CATALOG ─────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS catalog (
+  id                      UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  brand                   TEXT NOT NULL,
+  name                    TEXT NOT NULL,
+  category                TEXT DEFAULT '',
+  skin_type               TEXT DEFAULT 'All',
+  weight_grams            NUMERIC DEFAULT 0,
+  estimated_cost_krw      NUMERIC DEFAULT 0,
+  estimated_shipping_krw  NUMERIC DEFAULT 0,
+  suggested_b2c_price_uzs NUMERIC DEFAULT 0,
+  suggested_b2b_price_uzs NUMERIC DEFAULT 0,
+  notes                   TEXT DEFAULT '',
+  created_at              TIMESTAMPTZ DEFAULT NOW()
 );
 
--- 2. ORDERS
-CREATE TABLE orders (
-  id                    UUID DEFAULT gen_random_uuid() PRIMARY KEY,
-  customer_id           UUID REFERENCES customers(id) ON DELETE SET NULL,
-  salesperson           TEXT,
-  type                  TEXT DEFAULT 'B2C',          -- 'B2C' | 'B2B'
-  status                TEXT DEFAULT 'New',          -- 'New' | 'Purchased' | 'Shipped' | 'Delivered'
-  selling_price_usd     NUMERIC(10,2) DEFAULT 0,
-  shipping_rate_per_kg  NUMERIC(10,4) DEFAULT 0,
-  notes                 TEXT,
-  created_at            TIMESTAMPTZ DEFAULT NOW()
+-- ─── ORDERS ──────────────────────────────────────────────────
+-- Status flow: Pending → Purchased → Shipped → Delivered → Paid
+CREATE TABLE IF NOT EXISTS orders (
+  id            UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  customer_name TEXT NOT NULL,
+  product_id    UUID REFERENCES catalog(id) ON DELETE SET NULL,
+  quantity      INTEGER NOT NULL DEFAULT 1,
+  price_uzs     NUMERIC NOT NULL DEFAULT 0,
+  type          TEXT DEFAULT 'B2C',
+  status        TEXT DEFAULT 'Pending',
+  salesperson   TEXT DEFAULT '',
+  notes         TEXT DEFAULT '',
+  created_at    TIMESTAMPTZ DEFAULT NOW()
 );
 
--- 3. ORDER ITEMS
-CREATE TABLE order_items (
-  id                UUID DEFAULT gen_random_uuid() PRIMARY KEY,
-  order_id          UUID REFERENCES orders(id) ON DELETE CASCADE,
-  product_name      TEXT NOT NULL,
-  quantity          INTEGER DEFAULT 1,
-  purchase_cost_krw NUMERIC(12,2) DEFAULT 0,
-  weight_kg         NUMERIC(8,3) DEFAULT 0,
-  created_at        TIMESTAMPTZ DEFAULT NOW()
-);
-
--- 4. EXPENSES
-CREATE TABLE expenses (
+-- ─── INVENTORY ───────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS inventory (
   id          UUID DEFAULT gen_random_uuid() PRIMARY KEY,
-  date        DATE NOT NULL,
-  type        TEXT,     -- 'Salary' | 'Cargo' | 'Office' | 'Marketing' | 'Other'
-  description TEXT,
-  amount_usd  NUMERIC(10,2) DEFAULT 0,
-  paid_by     TEXT,
+  product_id  UUID REFERENCES catalog(id) ON DELETE CASCADE UNIQUE,
+  quantity    INTEGER DEFAULT 0,
+  updated_at  TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- ─── EXPENSES ────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS expenses (
+  id          UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  date        DATE NOT NULL DEFAULT CURRENT_DATE,
+  type        TEXT NOT NULL,
+  description TEXT NOT NULL,
+  amount_uzs  NUMERIC DEFAULT 0,
+  paid_by     TEXT DEFAULT '',
   created_at  TIMESTAMPTZ DEFAULT NOW()
 );
 
--- ============================================================
--- DISABLE Row Level Security (for internal team use only)
--- If you add login later, remove these lines and set up RLS policies
--- ============================================================
-ALTER TABLE customers  DISABLE ROW LEVEL SECURITY;
-ALTER TABLE orders     DISABLE ROW LEVEL SECURITY;
-ALTER TABLE order_items DISABLE ROW LEVEL SECURITY;
-ALTER TABLE expenses   DISABLE ROW LEVEL SECURITY;
+-- ─── INDEXES ─────────────────────────────────────────────────
+CREATE INDEX IF NOT EXISTS idx_orders_status     ON orders(status);
+CREATE INDEX IF NOT EXISTS idx_orders_created_at ON orders(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_catalog_brand     ON catalog(brand);
 
--- ============================================================
--- Done! You should now see 4 tables in your Supabase Table Editor.
--- ============================================================
+-- ─── ROW LEVEL SECURITY ──────────────────────────────────────
+ALTER TABLE catalog   ENABLE ROW LEVEL SECURITY;
+ALTER TABLE orders    ENABLE ROW LEVEL SECURITY;
+ALTER TABLE inventory ENABLE ROW LEVEL SECURITY;
+ALTER TABLE expenses  ENABLE ROW LEVEL SECURITY;
+
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename='catalog'   AND policyname='allow_all_catalog')   THEN CREATE POLICY allow_all_catalog   ON catalog   FOR ALL USING (true) WITH CHECK (true); END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename='orders'    AND policyname='allow_all_orders')    THEN CREATE POLICY allow_all_orders    ON orders    FOR ALL USING (true) WITH CHECK (true); END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename='inventory' AND policyname='allow_all_inventory') THEN CREATE POLICY allow_all_inventory ON inventory FOR ALL USING (true) WITH CHECK (true); END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename='expenses'  AND policyname='allow_all_expenses')  THEN CREATE POLICY allow_all_expenses  ON expenses  FOR ALL USING (true) WITH CHECK (true); END IF;
+END $$;
+
+-- ─── SAMPLE CATALOG DATA ─────────────────────────────────────
+INSERT INTO catalog (brand, name, category, skin_type, weight_grams, estimated_cost_krw, estimated_shipping_krw, suggested_b2c_price_uzs, suggested_b2b_price_uzs, notes) VALUES
+  ('COSRX',      'Advanced Snail 96 Mucin Power Essence', 'Serum',       'All',      100, 18000, 3000, 280000, 220000, 'Best seller'),
+  ('Some By Mi', 'AHA BHA PHA 30 Days Miracle Toner',     'Toner',       'Oily',     150, 15000, 3500, 220000, 170000, ''),
+  ('Laneige',    'Lip Sleeping Mask Berry',                'Lip',         'All',       20, 25000, 1500, 350000, 280000, 'Top seller'),
+  ('COSRX',      'Low pH Good Morning Gel Cleanser',      'Cleanser',    'Oily',     150, 12000, 3000, 180000, 140000, ''),
+  ('Innisfree',  'Green Tea Seed Serum',                   'Serum',       'Dry',       80, 22000, 2500, 300000, 240000, ''),
+  ('Klairs',     'Supple Preparation Unscented Toner',     'Toner',       'Sensitive',180, 19000, 3500, 250000, 195000, ''),
+  ('Missha',     'Time Revolution Night Repair Serum',     'Serum',       'All',       50, 35000, 2000, 450000, 360000, 'Premium')
+ON CONFLICT DO NOTHING;
