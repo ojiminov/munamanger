@@ -9,21 +9,19 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
   <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Supabase JS client -->
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <style>
     * { box-sizing: border-box; }
-    body { margin: 0; font-family: 'Nunito', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #F7F4F0; }
+    body { margin: 0; font-family: 'Nunito', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #fdf2f8; }
     .safe-bottom { padding-bottom: env(safe-area-inset-bottom, 16px); }
     input, select, textarea { outline: none; }
-    input:focus, select:focus, textarea:focus { border-color: #6D28D9 !important; box-shadow: 0 0 0 3px rgba(109,40,217,0.12); }
-    ::-webkit-scrollbar { width: 4px; } ::-webkit-scrollbar-thumb { background: #C4B5FD; border-radius: 4px; }
-    .slide-up { animation: slideUp 0.22s ease-out; }
+    input:focus, select:focus, textarea:focus { border-color: #ec4899 !important; box-shadow: 0 0 0 2px rgba(236,72,153,0.15); }
+    ::-webkit-scrollbar { width: 4px; } ::-webkit-scrollbar-thumb { background: #f9a8d4; border-radius: 4px; }
+    .slide-up { animation: slideUp 0.2s ease-out; }
     @keyframes slideUp { from { transform: translateY(20px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
     .fade-in { animation: fadeIn 0.15s ease-out; }
     @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
-    .muna-gradient { background: linear-gradient(135deg, #2D1760 0%, #1E1248 100%); }
-    .card-hover:hover { border-color: #C4B5FD; transform: translateY(-1px); box-shadow: 0 4px 16px rgba(109,40,217,0.1); }
-    .card-hover { transition: all 0.2s ease; }
   </style>
 </head>
 <body>
@@ -31,6 +29,8 @@
 <script type="text/babel">
 
 // ─── SUPABASE CONFIG ─────────────────────────────────────────────────────────
+// ⚠️  REPLACE THESE TWO VALUES with your own from:
+//     Supabase Dashboard → Settings → API
 const SUPABASE_URL  = 'https://tyggjybpadgifadakaof.supabase.co';
 const SUPABASE_KEY  = 'sb_publishable_1n7GfREMkbbDMrpfGd-TRA_tVCAvgZ7';
 
@@ -51,7 +51,7 @@ const toDB = {
   expense:   e => ({ date: e.date, type: e.type, description: e.description, amount_usd: +e.amountUSD, paid_by: e.paidBy }),
 };
 
-// ─── LOCAL SETTINGS ───────────────────────────────────────────────────────────
+// ─── LOCAL SETTINGS (exchange rate & team — stays in browser) ────────────────
 const getSettings = () => {
   try { return JSON.parse(localStorage.getItem('muna_settings')) || { krwToUsd: 0.00073, salespersons: ['Amir','Zara','Dina','Kamol','Sher'] }; }
   catch { return { krwToUsd: 0.00073, salespersons: ['Amir','Zara','Dina','Kamol','Sher'] }; }
@@ -60,23 +60,23 @@ const saveSettings = s => localStorage.setItem('muna_settings', JSON.stringify(s
 
 const { useState, useEffect, useMemo, useRef } = React;
 
-// ─── UTILS ────────────────────────────────────────────────────────────────────
-const today   = () => new Date().toISOString().slice(0, 10);
-const fmtDate = d => d ? new Date(d+'T00:00:00').toLocaleDateString('en-GB', { day:'2-digit', month:'short', year:'numeric' }) : '—';
-const fmtUSD  = n => `$${(+n||0).toFixed(2)}`;
-const fmtKRW  = n => `₩${Math.round(+n||0).toLocaleString()}`;
-const fmtKg   = n => `${(+n||0).toFixed(2)} kg`;
+// ─── UTILS ──────────────────────────────────────────────────────────────────
+const today    = () => new Date().toISOString().slice(0, 10);
+const fmtDate  = d => d ? new Date(d+'T00:00:00').toLocaleDateString('en-GB', { day:'2-digit', month:'short', year:'numeric' }) : '—';
+const fmtUSD   = n => `$${(+n||0).toFixed(2)}`;
+const fmtKRW   = n => `₩${Math.round(+n||0).toLocaleString()}`;
+const fmtKg    = n => `${(+n||0).toFixed(2)} kg`;
 
 const STATUS_META = {
-  'New':       { bg:'bg-blue-100',    text:'text-blue-700',   dot:'bg-blue-500' },
-  'Purchased': { bg:'bg-amber-100',   text:'text-amber-700',  dot:'bg-amber-500' },
-  'Shipped':   { bg:'bg-violet-100',  text:'text-violet-700', dot:'bg-violet-500' },
-  'Delivered': { bg:'bg-emerald-100', text:'text-emerald-700',dot:'bg-emerald-500' },
+  'New':       { bg:'bg-blue-100',   text:'text-blue-700',   dot:'bg-blue-500' },
+  'Purchased': { bg:'bg-amber-100',  text:'text-amber-700',  dot:'bg-amber-500' },
+  'Shipped':   { bg:'bg-violet-100', text:'text-violet-700', dot:'bg-violet-500' },
+  'Delivered': { bg:'bg-green-100',  text:'text-green-700',  dot:'bg-green-500' },
 };
 const STATUSES  = ['New','Purchased','Shipped','Delivered'];
 const EXP_TYPES = ['Salary','Cargo','Office','Marketing','Other'];
 
-// ─── CALCULATION ──────────────────────────────────────────────────────────────
+// ─── CALCULATION ─────────────────────────────────────────────────────────────
 const calcOrder = (order, items, krwToUsd) => {
   const its          = items.filter(i => i.orderId === order.id);
   const totalCostKRW = its.reduce((s,i) => s + (+i.purchaseCostKRW||0)*(+i.quantity||0), 0);
@@ -88,65 +88,42 @@ const calcOrder = (order, items, krwToUsd) => {
   return { orderItems:its, totalCostKRW, totalCostUSD, totalWeightKg, shippingCost, sellingPrice, profit };
 };
 
-// ─── MUNA LOGO SVG ───────────────────────────────────────────────────────────
-const MunaLogo = ({ size = 36 }) => (
-  <svg width={size} height={size} viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
-    <rect width="100" height="100" rx="22" fill="#1E1248"/>
-    {/* Botanical stem */}
-    <path d="M50 78 Q48 65 44 55" stroke="white" strokeWidth="3" strokeLinecap="round" fill="none"/>
-    <path d="M50 78 Q52 65 56 55" stroke="white" strokeWidth="3" strokeLinecap="round" fill="none"/>
-    {/* Face silhouette (simplified oval) */}
-    <ellipse cx="50" cy="36" rx="14" ry="17" fill="white" opacity="0.95"/>
-    {/* Left leaf */}
-    <path d="M36 28 Q24 22 26 38 Q34 34 36 28Z" fill="white" opacity="0.7"/>
-    {/* Right leaf */}
-    <path d="M64 28 Q76 22 74 38 Q66 34 64 28Z" fill="white" opacity="0.7"/>
-    {/* Top small leaves */}
-    <path d="M44 20 Q40 12 48 14 Q48 18 44 20Z" fill="white" opacity="0.6"/>
-    <path d="M56 20 Q60 12 52 14 Q52 18 56 20Z" fill="white" opacity="0.6"/>
-    {/* Bottom leaf left */}
-    <path d="M44 60 Q36 58 38 66 Q43 63 44 60Z" fill="white" opacity="0.5"/>
-    {/* Bottom leaf right */}
-    <path d="M56 60 Q64 58 62 66 Q57 63 56 60Z" fill="white" opacity="0.5"/>
-  </svg>
-);
-
-// ─── TOAST ────────────────────────────────────────────────────────────────────
+// ─── TOAST ───────────────────────────────────────────────────────────────────
 function Toast({ msg, type }) {
   if (!msg) return null;
-  const colors = { success:'bg-emerald-500', error:'bg-red-500', info:'bg-purple-700' };
+  const colors = { success:'bg-green-500', error:'bg-red-500', info:'bg-blue-500' };
   return (
-    <div className={`fixed top-4 left-1/2 -translate-x-1/2 z-[100] px-5 py-3 rounded-2xl text-white text-sm font-bold shadow-xl ${colors[type]||'bg-gray-700'} fade-in`}>
+    <div className={`fixed top-4 left-1/2 -translate-x-1/2 z-[100] px-4 py-2.5 rounded-xl text-white text-sm font-semibold shadow-lg ${colors[type]||'bg-gray-700'} fade-in`}>
       {msg}
     </div>
   );
 }
 
-// ─── UI ATOMS ─────────────────────────────────────────────────────────────────
+// ─── UI ATOMS ────────────────────────────────────────────────────────────────
 const Badge = ({ status }) => {
   const m = STATUS_META[status]||STATUS_META['New'];
   return (
-    <span className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-bold ${m.bg} ${m.text}`}>
+    <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold ${m.bg} ${m.text}`}>
       <span className={`w-1.5 h-1.5 rounded-full ${m.dot}`} />{status}
     </span>
   );
 };
 
 const Card = ({ children, className='', onClick }) => (
-  <div onClick={onClick} className={`bg-white rounded-2xl shadow-sm border border-purple-100 p-4 ${onClick?'cursor-pointer card-hover':''} ${className}`}>
+  <div onClick={onClick} className={`bg-white rounded-2xl shadow-sm border border-pink-50 p-4 ${onClick?'cursor-pointer active:scale-[0.99] transition-transform':''} ${className}`}>
     {children}
   </div>
 );
 
 const Btn = ({ children, onClick, variant='primary', size='md', className='', type='button', disabled=false, loading=false }) => {
-  const base = 'inline-flex items-center justify-center gap-2 font-bold rounded-xl transition-all active:scale-95 disabled:opacity-50';
-  const sizes = { sm:'px-3 py-2 text-sm', md:'px-4 py-2.5 text-sm', lg:'px-5 py-3.5 text-base w-full' };
+  const base = 'inline-flex items-center justify-center gap-2 font-semibold rounded-xl transition-all active:scale-95 disabled:opacity-50';
+  const sizes = { sm:'px-3 py-1.5 text-sm', md:'px-4 py-2.5 text-sm', lg:'px-5 py-3 text-base w-full' };
   const variants = {
-    primary:  'bg-purple-800 hover:bg-purple-900 text-white shadow-sm shadow-purple-200',
-    secondary:'bg-purple-50 hover:bg-purple-100 text-purple-800',
+    primary:  'bg-pink-500 hover:bg-pink-600 text-white shadow-sm',
+    secondary:'bg-pink-50 hover:bg-pink-100 text-pink-700',
     danger:   'bg-red-50 hover:bg-red-100 text-red-600',
-    ghost:    'hover:bg-purple-50 text-purple-600',
-    outline:  'border-2 border-purple-200 text-purple-700 hover:bg-purple-50',
+    ghost:    'hover:bg-gray-100 text-gray-600',
+    outline:  'border border-pink-200 text-pink-600 hover:bg-pink-50',
   };
   return (
     <button type={type} onClick={onClick} disabled={disabled||loading}
@@ -158,54 +135,57 @@ const Btn = ({ children, onClick, variant='primary', size='md', className='', ty
 
 const Input = ({ label, required, className='', ...props }) => (
   <div className={className}>
-    {label && <label className="block text-xs font-bold text-purple-800 mb-1.5">{label}{required&&<span className="text-red-400 ml-0.5">*</span>}</label>}
-    <input className="w-full border-2 border-purple-100 rounded-xl px-3.5 py-2.5 text-sm bg-purple-50/30 transition-all font-medium" {...props} />
+    {label && <label className="block text-xs font-semibold text-gray-500 mb-1">{label}{required&&<span className="text-pink-500 ml-0.5">*</span>}</label>}
+    <input className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm bg-gray-50 transition-colors" {...props} />
   </div>
 );
 
 const Sel = ({ label, required, children, className='', ...props }) => (
   <div className={className}>
-    {label && <label className="block text-xs font-bold text-purple-800 mb-1.5">{label}{required&&<span className="text-red-400 ml-0.5">*</span>}</label>}
-    <select className="w-full border-2 border-purple-100 rounded-xl px-3.5 py-2.5 text-sm bg-purple-50/30 appearance-none transition-all font-medium" {...props}>{children}</select>
+    {label && <label className="block text-xs font-semibold text-gray-500 mb-1">{label}{required&&<span className="text-pink-500 ml-0.5">*</span>}</label>}
+    <select className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm bg-gray-50 appearance-none transition-colors" {...props}>{children}</select>
   </div>
 );
 
 const Modal = ({ title, onClose, children }) => (
-  <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center fade-in" style={{background:'rgba(30,18,72,0.5)'}}>
-    <div className="bg-white w-full max-w-lg rounded-t-3xl sm:rounded-3xl shadow-2xl max-h-[90vh] flex flex-col slide-up">
-      <div className="flex items-center justify-between px-5 py-4 border-b border-purple-100">
-        <h3 className="font-extrabold text-purple-950 text-base">{title}</h3>
-        <button onClick={onClose} className="w-9 h-9 flex items-center justify-center rounded-full bg-purple-50 text-purple-600 text-lg font-black hover:bg-purple-100 transition-colors">×</button>
+  <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center fade-in" style={{background:'rgba(0,0,0,0.4)'}}>
+    <div className="bg-white w-full max-w-lg rounded-t-3xl sm:rounded-2xl shadow-2xl max-h-[90vh] flex flex-col slide-up">
+      <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
+        <h3 className="font-bold text-gray-800 text-base">{title}</h3>
+        <button onClick={onClose} className="w-8 h-8 flex items-center justify-center rounded-full bg-gray-100 text-gray-500 text-lg font-bold">×</button>
       </div>
       <div className="overflow-y-auto flex-1 px-5 py-4">{children}</div>
     </div>
   </div>
 );
 
-const StatCard = ({ label, value, sub, gradient }) => (
-  <div className={`${gradient} rounded-2xl p-4 text-white shadow-md`}>
-    <p className="text-xs font-semibold opacity-75 mb-1">{label}</p>
-    <p className="text-2xl font-black tracking-tight">{value}</p>
-    {sub && <p className="text-xs opacity-60 mt-1">{sub}</p>}
-  </div>
-);
+const StatCard = ({ label, value, sub, color='pink' }) => {
+  const colors = { pink:'from-pink-400 to-rose-500', violet:'from-violet-400 to-purple-500', green:'from-emerald-400 to-green-500', amber:'from-amber-400 to-orange-500' };
+  return (
+    <div className={`bg-gradient-to-br ${colors[color]} rounded-2xl p-4 text-white shadow-sm`}>
+      <p className="text-xs font-medium opacity-80 mb-1">{label}</p>
+      <p className="text-2xl font-bold tracking-tight">{value}</p>
+      {sub && <p className="text-xs opacity-70 mt-1">{sub}</p>}
+    </div>
+  );
+};
 
 const EmptyState = ({ icon, title, sub, action }) => (
   <div className="flex flex-col items-center justify-center py-16 text-center">
     <div className="text-5xl mb-3">{icon}</div>
-    <p className="font-bold text-purple-900 mb-1">{title}</p>
-    <p className="text-sm text-purple-400 mb-5">{sub}</p>
+    <p className="font-semibold text-gray-600 mb-1">{title}</p>
+    <p className="text-sm text-gray-400 mb-4">{sub}</p>
     {action}
   </div>
 );
 
 const Spinner = ({ full }) => (
   <div className={`flex items-center justify-center ${full?'h-64':''}`}>
-    <div className="w-8 h-8 border-4 border-purple-200 border-t-purple-700 rounded-full animate-spin"/>
+    <div className="w-8 h-8 border-4 border-pink-200 border-t-pink-500 rounded-full animate-spin"/>
   </div>
 );
 
-// ─── NAV ICONS ────────────────────────────────────────────────────────────────
+// ─── NAV ICONS ───────────────────────────────────────────────────────────────
 const Ico = {
   dashboard: <svg viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5"><path d="M3 13h8V3H3v10zm0 8h8v-6H3v6zm10 0h8V11h-8v10zm0-18v6h8V3h-8z"/></svg>,
   orders:    <svg viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5"><path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-5 14H7v-2h7v2zm3-4H7v-2h10v2zm0-4H7V7h10v2z"/></svg>,
@@ -219,9 +199,9 @@ const Ico = {
   check:     <svg viewBox="0 0 24 24" fill="currentColor" className="w-4 h-4"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg>,
 };
 
-// ═══════════════════════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════════════
 // MAIN APP
-// ═══════════════════════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════════════
 function App() {
   const [customers,  setCustomers]  = useState([]);
   const [orders,     setOrders]     = useState([]);
@@ -240,6 +220,7 @@ function App() {
     toastTimer.current = setTimeout(() => setToast({ msg:'', type:'info' }), 2500);
   };
 
+  // ── LOAD ALL DATA ──────────────────────────────────────────────────────────
   useEffect(() => {
     (async () => {
       try {
@@ -263,12 +244,14 @@ function App() {
   }, []);
 
   const updateSettings = s => { setSettingsS(s); saveSettings(s); };
-  const navTo    = p  => { setPage(p); setViewOrderId(null); };
+
+  const navTo = p => { setPage(p); setViewOrderId(null); };
   const openOrder = id => { setViewOrderId(id); setPage('orderDetail'); };
 
+  // ── STATS ──────────────────────────────────────────────────────────────────
   const stats = useMemo(() => {
     const kr = settings.krwToUsd;
-    const delivered     = orders.filter(o => o.status === 'Delivered');
+    const delivered = orders.filter(o => o.status === 'Delivered');
     const totalRevenue  = delivered.reduce((s,o) => s + (+o.sellingPriceUSD||0), 0);
     const totalCostUSD  = orders.reduce((s,o) => {
       const its = orderItems.filter(i => i.orderId === o.id);
@@ -285,10 +268,10 @@ function App() {
   }, [orders, orderItems, expenses, settings.krwToUsd]);
 
   if (loading) return (
-    <div className="min-h-screen flex flex-col items-center justify-center gap-5" style={{background:'#F7F4F0'}}>
-      <MunaLogo size={64} />
-      <div className="w-8 h-8 border-4 border-purple-200 border-t-purple-800 rounded-full animate-spin"/>
-      <p className="text-sm font-semibold text-purple-400">Loading your data…</p>
+    <div className="min-h-screen bg-gray-50 flex flex-col items-center justify-center gap-4">
+      <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-pink-500 to-rose-600 flex items-center justify-center text-white font-black text-2xl shadow-lg">M</div>
+      <Spinner />
+      <p className="text-sm text-gray-400">Loading your data…</p>
     </div>
   );
 
@@ -309,16 +292,16 @@ function App() {
   };
 
   return (
-    <div className="min-h-screen pb-24" style={{background:'#F7F4F0'}}>
+    <div className="min-h-screen bg-gray-50 pb-20">
       <Toast msg={toast.msg} type={toast.type} />
 
       {page !== 'orderDetail' && (
-        <header className="bg-white border-b border-purple-100 sticky top-0 z-30 shadow-sm">
+        <header className="bg-white border-b border-pink-100 sticky top-0 z-30">
           <div className="max-w-2xl mx-auto px-4 py-3 flex items-center gap-3">
-            <MunaLogo size={38} />
+            <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-pink-500 to-rose-600 flex items-center justify-center text-white font-black text-sm shadow-sm">M</div>
             <div>
-              <h1 className="font-black text-purple-950 text-base leading-none tracking-tight">Muna Manager</h1>
-              <p className="text-xs text-purple-400 font-semibold mt-0.5">K-Beauty · Uzbekistan</p>
+              <h1 className="font-extrabold text-gray-800 text-base leading-none tracking-tight">Muna Manager</h1>
+              <p className="text-xs text-gray-400">K-Beauty · Uzbekistan</p>
             </div>
           </div>
         </header>
@@ -327,17 +310,17 @@ function App() {
       <main className="max-w-2xl mx-auto">{renderPage()}</main>
 
       {page !== 'orderDetail' && (
-        <nav className="fixed bottom-0 left-0 right-0 bg-white border-t border-purple-100 safe-bottom z-40 shadow-[0_-4px_16px_rgba(109,40,217,0.06)]">
+        <nav className="fixed bottom-0 left-0 right-0 bg-white border-t border-pink-100 safe-bottom z-40">
           <div className="max-w-2xl mx-auto flex">
             {[
               { key:'dashboard', label:'Home',      icon:Ico.dashboard },
               { key:'orders',    label:'Orders',    icon:Ico.orders },
-              { key:'customers', label:'Clients',   icon:Ico.customers },
+              { key:'customers', label:'Customers', icon:Ico.customers },
               { key:'expenses',  label:'Expenses',  icon:Ico.expenses },
               { key:'settings',  label:'Settings',  icon:Ico.settings },
             ].map(n => (
               <button key={n.key} onClick={() => navTo(n.key)}
-                className={`flex-1 flex flex-col items-center gap-0.5 py-2.5 text-xs font-bold transition-colors ${page===n.key?'text-purple-700':'text-gray-400 hover:text-purple-500'}`}>
+                className={`flex-1 flex flex-col items-center gap-0.5 py-2 text-xs font-medium transition-colors ${page===n.key?'text-pink-500':'text-gray-400 hover:text-gray-600'}`}>
                 {n.icon}{n.label}
               </button>
             ))}
@@ -348,57 +331,55 @@ function App() {
   );
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════════════
 // DASHBOARD
-// ═══════════════════════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════════════
 function Dashboard({ stats, orders, customers, orderItems, settings, onViewOrder, onNav }) {
   const recent = [...orders].slice(0, 5);
   return (
-    <div className="px-4 py-5 space-y-4 slide-up">
-      <h2 className="font-black text-purple-950 text-xl">Overview</h2>
+    <div className="px-4 py-4 space-y-4 slide-up">
+      <h2 className="font-bold text-gray-800 text-lg">Overview</h2>
       <div className="grid grid-cols-2 gap-3">
-        <StatCard label="Total Revenue"  value={fmtUSD(stats.totalRevenue)}  sub="Delivered orders"    gradient="bg-gradient-to-br from-purple-700 to-indigo-900" />
-        <StatCard label="Net Profit"     value={fmtUSD(stats.netProfit)}     sub="After all expenses"  gradient={stats.netProfit>=0 ? "bg-gradient-to-br from-emerald-500 to-green-700" : "bg-gradient-to-br from-amber-500 to-orange-700"} />
-        <StatCard label="Total Expenses" value={fmtUSD(stats.totalExpenses)} sub="Salary, cargo, etc." gradient="bg-gradient-to-br from-violet-600 to-purple-900" />
-        <StatCard label="Total Orders"   value={stats.totalOrders}           sub="All time"            gradient="bg-gradient-to-br from-slate-600 to-gray-900" />
+        <StatCard label="Total Revenue"  value={fmtUSD(stats.totalRevenue)}  sub="Delivered orders"    color="pink" />
+        <StatCard label="Net Profit"     value={fmtUSD(stats.netProfit)}     sub="After all expenses"  color={stats.netProfit>=0?'green':'amber'} />
+        <StatCard label="Total Expenses" value={fmtUSD(stats.totalExpenses)} sub="Salary, cargo, etc." color="violet" />
+        <StatCard label="Total Orders"   value={stats.totalOrders}           sub="All time"            color="amber" />
       </div>
-
       <Card>
         <div className="grid grid-cols-3 gap-3 text-center">
           {[
-            { label:'Active',    count:orders.filter(o=>o.status!=='Delivered').length, color:'text-purple-700' },
-            { label:'Shipped',   count:orders.filter(o=>o.status==='Shipped').length,   color:'text-violet-600' },
-            { label:'Delivered', count:orders.filter(o=>o.status==='Delivered').length, color:'text-emerald-600' },
+            { label:'Active',    count:orders.filter(o=>o.status!=='Delivered').length, color:'text-pink-500' },
+            { label:'Shipped',   count:orders.filter(o=>o.status==='Shipped').length,   color:'text-violet-500' },
+            { label:'Delivered', count:orders.filter(o=>o.status==='Delivered').length, color:'text-green-500' },
           ].map(s => (
             <div key={s.label}>
-              <p className={`text-3xl font-black ${s.color}`}>{s.count}</p>
-              <p className="text-xs text-purple-400 font-semibold mt-0.5">{s.label}</p>
+              <p className={`text-2xl font-bold ${s.color}`}>{s.count}</p>
+              <p className="text-xs text-gray-400">{s.label}</p>
             </div>
           ))}
         </div>
       </Card>
-
       {recent.length > 0 ? (
         <div>
-          <div className="flex items-center justify-between mb-3">
-            <h3 className="font-extrabold text-purple-950">Recent Orders</h3>
-            <button onClick={() => onNav('orders')} className="text-xs text-purple-700 font-bold">View all →</button>
+          <div className="flex items-center justify-between mb-2">
+            <h3 className="font-semibold text-gray-700">Recent Orders</h3>
+            <button onClick={() => onNav('orders')} className="text-xs text-pink-500 font-medium">View all →</button>
           </div>
           <div className="space-y-2">
             {recent.map(order => {
               const customer = customers.find(c => c.id === order.customerId);
               const { profit } = calcOrder(order, orderItems, settings.krwToUsd);
               return (
-                <Card key={order.id} onClick={() => onViewOrder(order.id)} className="hover:border-purple-200">
+                <Card key={order.id} onClick={() => onViewOrder(order.id)} className="hover:border-pink-200 transition-colors">
                   <div className="flex items-center justify-between">
                     <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 mb-1"><Badge status={order.status} /><span className="text-xs text-purple-400 font-semibold">{order.type}</span></div>
-                      <p className="font-extrabold text-purple-950 text-sm truncate">{customer?.name||'Unknown'}</p>
-                      <p className="text-xs text-purple-400 font-medium">{fmtDate(order.createdAt)}</p>
+                      <div className="flex items-center gap-2 mb-1"><Badge status={order.status} /><span className="text-xs text-gray-400">{order.type}</span></div>
+                      <p className="font-semibold text-gray-800 text-sm truncate">{customer?.name||'Unknown'}</p>
+                      <p className="text-xs text-gray-400">{fmtDate(order.createdAt)}</p>
                     </div>
                     <div className="text-right ml-3">
-                      <p className="font-black text-purple-950">{fmtUSD(order.sellingPriceUSD)}</p>
-                      <p className={`text-xs font-bold ${profit>=0?'text-emerald-600':'text-red-500'}`}>{profit>=0?'+':''}{fmtUSD(profit)}</p>
+                      <p className="font-bold text-gray-800">{fmtUSD(order.sellingPriceUSD)}</p>
+                      <p className={`text-xs font-semibold ${profit>=0?'text-green-600':'text-red-500'}`}>{profit>=0?'+':''}{fmtUSD(profit)}</p>
                     </div>
                   </div>
                 </Card>
@@ -413,9 +394,9 @@ function Dashboard({ stats, orders, customers, orderItems, settings, onViewOrder
   );
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════════════
 // ORDERS PAGE
-// ═══════════════════════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════════════
 function OrdersPage({ orders, setOrders, customers, setCustomers, orderItems, settings, onView, salespersons, notify }) {
   const [filter,   setFilter]   = useState('All');
   const [showForm, setShowForm] = useState(false);
@@ -430,6 +411,7 @@ function OrdersPage({ orders, setOrders, customers, setCustomers, orderItems, se
   const saveOrder = async (data) => {
     setSaving(true);
     try {
+      // Create new customer inline if needed
       let customerId = data.customerId;
       if (!customerId && data.newCustomerName?.trim()) {
         const { data: nc, error } = await db.from('customers').insert({ name: data.newCustomerName.trim() }).select().single();
@@ -438,6 +420,7 @@ function OrdersPage({ orders, setOrders, customers, setCustomers, orderItems, se
         setCustomers(prev => [mapped, ...prev]);
         customerId = mapped.id;
       }
+
       const payload = toDB.order({ ...data, customerId });
       if (editId) {
         const { error } = await db.from('orders').update(payload).eq('id', editId);
@@ -465,15 +448,15 @@ function OrdersPage({ orders, setOrders, customers, setCustomers, orderItems, se
   };
 
   return (
-    <div className="px-4 py-5 slide-up">
+    <div className="px-4 py-4 slide-up">
       <div className="flex items-center justify-between mb-4">
-        <h2 className="font-black text-purple-950 text-xl">Orders</h2>
+        <h2 className="font-bold text-gray-800 text-lg">Orders</h2>
         <Btn onClick={() => { setEditId(null); setShowForm(true); }}>{Ico.plus} New Order</Btn>
       </div>
       <div className="flex gap-2 overflow-x-auto pb-2 mb-4 -mx-4 px-4">
         {['All',...STATUSES].map(s => (
           <button key={s} onClick={() => setFilter(s)}
-            className={`flex-shrink-0 px-3.5 py-1.5 rounded-full text-xs font-bold transition-all ${filter===s?'bg-purple-800 text-white shadow-sm':'bg-white text-purple-500 border-2 border-purple-100 hover:border-purple-300'}`}>
+            className={`flex-shrink-0 px-3 py-1.5 rounded-full text-xs font-semibold transition-colors ${filter===s?'bg-pink-500 text-white':'bg-white text-gray-500 border border-gray-200'}`}>
             {s} ({s==='All'?orders.length:orders.filter(o=>o.status===s).length})
           </button>
         ))}
@@ -486,22 +469,22 @@ function OrdersPage({ orders, setOrders, customers, setCustomers, orderItems, se
             const customer = customers.find(c => c.id===order.customerId);
             const { totalCostUSD, shippingCost, profit, totalWeightKg } = calcOrder(order, orderItems, settings.krwToUsd);
             return (
-              <Card key={order.id} className="card-hover">
-                <div className="flex items-start justify-between mb-3">
+              <Card key={order.id} className="hover:border-pink-200 transition-colors">
+                <div className="flex items-start justify-between mb-2">
                   <div>
-                    <div className="flex items-center gap-2 mb-1.5"><Badge status={order.status} /><span className="text-xs bg-purple-50 text-purple-700 px-2 py-0.5 rounded-full font-bold">{order.type}</span></div>
-                    <p className="font-extrabold text-purple-950">{customer?.name||'Unknown Customer'}</p>
-                    <p className="text-xs text-purple-400 font-semibold">{order.salesperson} · {fmtDate(order.createdAt)}</p>
+                    <div className="flex items-center gap-2 mb-1"><Badge status={order.status} /><span className="text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full font-medium">{order.type}</span></div>
+                    <p className="font-bold text-gray-800">{customer?.name||'Unknown Customer'}</p>
+                    <p className="text-xs text-gray-400">{order.salesperson} · {fmtDate(order.createdAt)}</p>
                   </div>
                   <div className="text-right">
-                    <p className="font-black text-purple-950 text-lg">{fmtUSD(order.sellingPriceUSD)}</p>
-                    <p className={`text-sm font-bold ${profit>=0?'text-emerald-600':'text-red-500'}`}>{profit>=0?'+':''}{fmtUSD(profit)} profit</p>
+                    <p className="font-bold text-gray-800 text-lg">{fmtUSD(order.sellingPriceUSD)}</p>
+                    <p className={`text-sm font-bold ${profit>=0?'text-green-600':'text-red-500'}`}>{profit>=0?'+':''}{fmtUSD(profit)} profit</p>
                   </div>
                 </div>
-                <div className="grid grid-cols-3 gap-2 text-center bg-purple-50 rounded-xl p-2.5 mb-3 text-xs">
-                  <div><p className="text-purple-400 font-semibold">Cost</p><p className="font-bold text-purple-900">{fmtUSD(totalCostUSD)}</p></div>
-                  <div><p className="text-purple-400 font-semibold">Shipping</p><p className="font-bold text-purple-900">{fmtUSD(shippingCost)}</p></div>
-                  <div><p className="text-purple-400 font-semibold">Weight</p><p className="font-bold text-purple-900">{fmtKg(totalWeightKg)}</p></div>
+                <div className="grid grid-cols-3 gap-2 text-center bg-gray-50 rounded-xl p-2 mb-3 text-xs">
+                  <div><p className="text-gray-400">Cost</p><p className="font-semibold">{fmtUSD(totalCostUSD)}</p></div>
+                  <div><p className="text-gray-400">Shipping</p><p className="font-semibold">{fmtUSD(shippingCost)}</p></div>
+                  <div><p className="text-gray-400">Weight</p><p className="font-semibold">{fmtKg(totalWeightKg)}</p></div>
                 </div>
                 <div className="flex gap-2">
                   <Btn size="sm" variant="secondary" onClick={() => onView(order.id)} className="flex-1">View Details</Btn>
@@ -541,10 +524,10 @@ function OrderFormModal({ order, customers, salespersons, onSave, onClose, savin
     <Modal title={order?'Edit Order':'New Order'} onClose={onClose}>
       <div className="space-y-3">
         <div>
-          <label className="block text-xs font-bold text-purple-800 mb-1.5">Customer <span className="text-red-400">*</span></label>
+          <label className="block text-xs font-semibold text-gray-500 mb-1">Customer <span className="text-pink-500">*</span></label>
           {!addingCust ? (
             <div className="flex gap-2">
-              <select value={form.customerId} onChange={e=>f('customerId',e.target.value)} className="flex-1 border-2 border-purple-100 rounded-xl px-3.5 py-2.5 text-sm bg-purple-50/30 font-medium">
+              <select value={form.customerId} onChange={e=>f('customerId',e.target.value)} className="flex-1 border border-gray-200 rounded-xl px-3 py-2.5 text-sm bg-gray-50">
                 <option value="">— Select customer —</option>
                 {customers.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}
               </select>
@@ -552,7 +535,7 @@ function OrderFormModal({ order, customers, salespersons, onSave, onClose, savin
             </div>
           ) : (
             <div className="flex gap-2">
-              <input value={form.newCustomerName} onChange={e=>f('newCustomerName',e.target.value)} placeholder="New customer name" className="flex-1 border-2 border-purple-100 rounded-xl px-3.5 py-2.5 text-sm bg-purple-50/30 font-medium" />
+              <input value={form.newCustomerName} onChange={e=>f('newCustomerName',e.target.value)} placeholder="New customer name" className="flex-1 border border-gray-200 rounded-xl px-3 py-2.5 text-sm bg-gray-50" />
               <Btn size="sm" variant="ghost" onClick={() => setAddingCust(false)}>Cancel</Btn>
             </div>
           )}
@@ -565,8 +548,8 @@ function OrderFormModal({ order, customers, salespersons, onSave, onClose, savin
         <Input label="Selling Price (USD)" type="number" min="0" step="0.01" required value={form.sellingPriceUSD} onChange={e=>f('sellingPriceUSD',e.target.value)} placeholder="e.g. 150.00" />
         <Input label="Shipping Rate (USD/kg)" type="number" min="0" step="0.01" value={form.shippingRatePerKg} onChange={e=>f('shippingRatePerKg',e.target.value)} placeholder="e.g. 5.00" />
         <div>
-          <label className="block text-xs font-bold text-purple-800 mb-1.5">Notes</label>
-          <textarea value={form.notes} onChange={e=>f('notes',e.target.value)} rows={2} className="w-full border-2 border-purple-100 rounded-xl px-3.5 py-2.5 text-sm bg-purple-50/30 resize-none font-medium" placeholder="Optional notes…" />
+          <label className="block text-xs font-semibold text-gray-500 mb-1">Notes</label>
+          <textarea value={form.notes} onChange={e=>f('notes',e.target.value)} rows={2} className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm bg-gray-50 resize-none" placeholder="Optional notes..." />
         </div>
         <Btn size="lg" onClick={submit} loading={saving}>{Ico.check} Save Order</Btn>
       </div>
@@ -574,9 +557,9 @@ function OrderFormModal({ order, customers, salespersons, onSave, onClose, savin
   );
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════════════
 // ORDER DETAIL
-// ═══════════════════════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════════════
 function OrderDetail({ orderId, orders, setOrders, orderItems, setOrderItems, customers, settings, notify, onBack }) {
   const order = orders.find(o => o.id===orderId);
   const [showItemForm, setShowItemForm] = useState(false);
@@ -584,7 +567,7 @@ function OrderDetail({ orderId, orders, setOrders, orderItems, setOrderItems, cu
   const [showEdit,     setShowEdit]     = useState(false);
   const [saving,       setSaving]       = useState(false);
 
-  if (!order) return <div className="p-4 text-center text-purple-400 font-semibold">Order not found.</div>;
+  if (!order) return <div className="p-4 text-center text-gray-500">Order not found.</div>;
 
   const customer = customers.find(c => c.id===order.customerId);
   const { orderItems: items, totalCostKRW, totalCostUSD, totalWeightKg, shippingCost, sellingPrice, profit } = calcOrder(order, orderItems, settings.krwToUsd);
@@ -638,44 +621,44 @@ function OrderDetail({ orderId, orders, setOrders, orderItems, setOrderItems, cu
 
   return (
     <div className="slide-up">
-      <header className="bg-white border-b border-purple-100 sticky top-0 z-30 shadow-sm">
+      <header className="bg-white border-b border-pink-100 sticky top-0 z-30">
         <div className="max-w-2xl mx-auto px-4 py-3 flex items-center gap-3">
-          <button onClick={onBack} className="p-2 rounded-xl bg-purple-50 text-purple-700 hover:bg-purple-100 transition-colors">{Ico.back}</button>
+          <button onClick={onBack} className="p-1.5 rounded-xl bg-gray-100 text-gray-600">{Ico.back}</button>
           <div className="flex-1 min-w-0">
-            <h1 className="font-black text-purple-950 truncate">{customer?.name||'Unknown'}</h1>
-            <div className="flex items-center gap-2"><Badge status={order.status} /><span className="text-xs text-purple-400 font-semibold">{order.type} · {fmtDate(order.createdAt)}</span></div>
+            <h1 className="font-bold text-gray-800 truncate">{customer?.name||'Unknown'}</h1>
+            <div className="flex items-center gap-2"><Badge status={order.status} /><span className="text-xs text-gray-400">{order.type} · {fmtDate(order.createdAt)}</span></div>
           </div>
           <Btn size="sm" variant="ghost" onClick={() => setShowEdit(true)}>{Ico.edit}</Btn>
         </div>
       </header>
 
-      <div className="px-4 py-5 space-y-4 max-w-2xl mx-auto">
+      <div className="px-4 py-4 space-y-4 max-w-2xl mx-auto">
         {/* Financials */}
-        <div className="muna-gradient rounded-2xl p-5 text-white shadow-lg">
+        <div className="bg-gradient-to-br from-pink-500 to-rose-600 rounded-2xl p-4 text-white shadow-md">
           <div className="grid grid-cols-2 gap-3">
-            <div><p className="text-xs opacity-60 font-semibold">Selling Price</p><p className="text-2xl font-black">{fmtUSD(sellingPrice)}</p></div>
-            <div className="text-right"><p className="text-xs opacity-60 font-semibold">Profit</p><p className={`text-2xl font-black ${profit<0?'text-red-300':''}`}>{profit>=0?'+':''}{fmtUSD(profit)}</p></div>
+            <div><p className="text-xs opacity-70">Selling Price</p><p className="text-2xl font-bold">{fmtUSD(sellingPrice)}</p></div>
+            <div className="text-right"><p className="text-xs opacity-70">Profit</p><p className={`text-2xl font-bold ${profit<0?'text-red-200':''}`}>{profit>=0?'+':''}{fmtUSD(profit)}</p></div>
           </div>
-          <div className="mt-4 pt-4 border-t border-white/20 grid grid-cols-3 gap-2 text-xs text-center">
-            <div><p className="opacity-50 font-semibold">Product Cost</p><p className="font-black">{fmtUSD(totalCostUSD)}</p><p className="opacity-40 text-[10px]">{fmtKRW(totalCostKRW)}</p></div>
-            <div><p className="opacity-50 font-semibold">Shipping</p><p className="font-black">{fmtUSD(shippingCost)}</p><p className="opacity-40 text-[10px]">{fmtKg(totalWeightKg)}</p></div>
-            <div><p className="opacity-50 font-semibold">Margin</p><p className="font-black">{sellingPrice>0?((profit/sellingPrice)*100).toFixed(1):0}%</p></div>
+          <div className="mt-3 pt-3 border-t border-white/20 grid grid-cols-3 gap-2 text-xs text-center">
+            <div><p className="opacity-60">Product Cost</p><p className="font-semibold">{fmtUSD(totalCostUSD)}</p><p className="opacity-50">{fmtKRW(totalCostKRW)}</p></div>
+            <div><p className="opacity-60">Shipping</p><p className="font-semibold">{fmtUSD(shippingCost)}</p><p className="opacity-50">{fmtKg(totalWeightKg)}</p></div>
+            <div><p className="opacity-60">Margin</p><p className="font-semibold">{sellingPrice>0?((profit/sellingPrice)*100).toFixed(1):0}%</p></div>
           </div>
         </div>
 
         {/* Status */}
         <Card>
-          <p className="text-xs font-bold text-purple-400 mb-3">Order Status</p>
-          <div className="flex items-center gap-1 mb-4">
+          <p className="text-xs font-semibold text-gray-500 mb-3">Order Status</p>
+          <div className="flex items-center gap-1 mb-3">
             {STATUSES.map((s,i) => {
               const idx = STATUSES.indexOf(order.status);
               const active = i <= idx;
               return (
                 <React.Fragment key={s}>
-                  <div className={`flex-shrink-0 w-7 h-7 rounded-full flex items-center justify-center text-xs font-black ${active?'bg-purple-800 text-white':'bg-purple-50 text-purple-300'}`}>
+                  <div className={`flex-shrink-0 w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold ${active?'bg-pink-500 text-white':'bg-gray-100 text-gray-400'}`}>
                     {i<idx ? Ico.check : i+1}
                   </div>
-                  {i<STATUSES.length-1 && <div className={`flex-1 h-1 rounded-full ${i<idx?'bg-purple-800':'bg-purple-100'}`}/>}
+                  {i<STATUSES.length-1 && <div className={`flex-1 h-1 rounded-full ${i<idx?'bg-pink-500':'bg-gray-100'}`}/>}
                 </React.Fragment>
               );
             })}
@@ -683,18 +666,18 @@ function OrderDetail({ orderId, orders, setOrders, orderItems, setOrderItems, cu
           <div className="flex gap-1.5 flex-wrap">
             {STATUSES.map(s => (
               <button key={s} onClick={() => updateStatus(s)}
-                className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-colors ${order.status===s?'bg-purple-800 text-white':'bg-purple-50 text-purple-700 hover:bg-purple-100'}`}>{s}</button>
+                className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${order.status===s?'bg-pink-500 text-white':'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}>{s}</button>
             ))}
           </div>
         </Card>
 
         {/* Details */}
         <Card>
-          <p className="text-xs font-bold text-purple-400 mb-3">Details</p>
-          <div className="space-y-2 text-sm">
-            <div className="flex justify-between"><span className="text-purple-400 font-semibold">Salesperson</span><span className="font-bold text-purple-950">{order.salesperson}</span></div>
-            <div className="flex justify-between"><span className="text-purple-400 font-semibold">Shipping Rate</span><span className="font-bold text-purple-950">{fmtUSD(order.shippingRatePerKg)}/kg</span></div>
-            {order.notes&&<div className="flex justify-between"><span className="text-purple-400 font-semibold">Notes</span><span className="font-bold text-purple-950 text-right max-w-[60%]">{order.notes}</span></div>}
+          <p className="text-xs font-semibold text-gray-500 mb-2">Details</p>
+          <div className="space-y-1.5 text-sm">
+            <div className="flex justify-between"><span className="text-gray-500">Salesperson</span><span className="font-medium">{order.salesperson}</span></div>
+            <div className="flex justify-between"><span className="text-gray-500">Shipping Rate</span><span className="font-medium">{fmtUSD(order.shippingRatePerKg)}/kg</span></div>
+            {order.notes&&<div className="flex justify-between"><span className="text-gray-500">Notes</span><span className="font-medium text-right max-w-[60%]">{order.notes}</span></div>}
           </div>
         </Card>
 
@@ -702,8 +685,8 @@ function OrderDetail({ orderId, orders, setOrders, orderItems, setOrderItems, cu
         <div>
           <div className="flex items-center justify-between mb-3">
             <div>
-              <h3 className="font-black text-purple-950">Products</h3>
-              <p className="text-xs text-purple-400 font-semibold">{items.length} item{items.length!==1?'s':''} · {fmtKg(totalWeightKg)} total</p>
+              <h3 className="font-bold text-gray-800">Products</h3>
+              <p className="text-xs text-gray-400">{items.length} item{items.length!==1?'s':''} · {fmtKg(totalWeightKg)} total</p>
             </div>
             <Btn size="sm" onClick={() => { setEditItem(null); setShowItemForm(true); }}>{Ico.plus} Add Item</Btn>
           </div>
@@ -719,18 +702,18 @@ function OrderDetail({ orderId, orders, setOrders, orderItems, setOrderItems, cu
                   <Card key={item.id}>
                     <div className="flex items-start justify-between mb-2">
                       <div className="flex-1 min-w-0">
-                        <p className="font-extrabold text-purple-950 truncate">{item.productName}</p>
-                        <p className="text-xs text-purple-400 font-semibold">Qty: {item.quantity} · {fmtKRW(item.purchaseCostKRW)}/unit · {item.weightKg}kg/unit</p>
+                        <p className="font-semibold text-gray-800 truncate">{item.productName}</p>
+                        <p className="text-xs text-gray-400">Qty: {item.quantity} · {fmtKRW(item.purchaseCostKRW)}/unit · {item.weightKg}kg/unit</p>
                       </div>
                       <div className="flex gap-1 ml-2">
-                        <button onClick={() => { setEditItem(item); setShowItemForm(true); }} className="p-1.5 text-purple-300 hover:text-purple-700 rounded-lg hover:bg-purple-50 transition-colors">{Ico.edit}</button>
-                        <button onClick={() => deleteItem(item.id)} className="p-1.5 text-purple-300 hover:text-red-500 rounded-lg hover:bg-red-50 transition-colors">{Ico.trash}</button>
+                        <button onClick={() => { setEditItem(item); setShowItemForm(true); }} className="p-1.5 text-gray-400 hover:text-pink-500 rounded-lg hover:bg-pink-50">{Ico.edit}</button>
+                        <button onClick={() => deleteItem(item.id)} className="p-1.5 text-gray-400 hover:text-red-500 rounded-lg hover:bg-red-50">{Ico.trash}</button>
                       </div>
                     </div>
-                    <div className="grid grid-cols-3 gap-2 bg-purple-50 rounded-xl p-2.5 text-xs text-center">
-                      <div><p className="text-purple-400 font-semibold">Total KRW</p><p className="font-bold text-purple-900">{fmtKRW(itemCostKRW)}</p></div>
-                      <div><p className="text-purple-400 font-semibold">Total USD</p><p className="font-bold text-purple-900">{fmtUSD(itemCostUSD)}</p></div>
-                      <div><p className="text-purple-400 font-semibold">Total Weight</p><p className="font-bold text-purple-900">{fmtKg(itemWeight)}</p></div>
+                    <div className="grid grid-cols-3 gap-2 bg-gray-50 rounded-xl p-2 text-xs text-center">
+                      <div><p className="text-gray-400">Total KRW</p><p className="font-semibold">{fmtKRW(itemCostKRW)}</p></div>
+                      <div><p className="text-gray-400">Total USD</p><p className="font-semibold">{fmtUSD(itemCostUSD)}</p></div>
+                      <div><p className="text-gray-400">Total Weight</p><p className="font-semibold">{fmtKg(itemWeight)}</p></div>
                     </div>
                   </Card>
                 );
@@ -767,10 +750,10 @@ function ItemFormModal({ item, onSave, onClose, saving }) {
         </div>
         <Input label="Weight per unit (kg)" type="number" min="0" step="0.001" value={form.weightKg} onChange={e=>f('weightKg',e.target.value)} placeholder="0.150" />
         {(form.quantity&&form.purchaseCostKRW) && (
-          <div className="bg-purple-50 rounded-xl p-3 text-sm border border-purple-100">
-            <p className="text-xs font-bold text-purple-600 mb-1.5">Auto-calculated</p>
-            <div className="flex justify-between text-purple-700"><span className="font-semibold">Total Cost</span><span className="font-black">{fmtKRW(totalKRW)}</span></div>
-            {form.weightKg&&<div className="flex justify-between text-purple-700 mt-1"><span className="font-semibold">Total Weight</span><span className="font-black">{fmtKg(totalWt)}</span></div>}
+          <div className="bg-pink-50 rounded-xl p-3 text-sm">
+            <p className="text-xs font-semibold text-pink-600 mb-1.5">Auto-calculated</p>
+            <div className="flex justify-between text-gray-600"><span>Total Cost</span><span className="font-semibold">{fmtKRW(totalKRW)}</span></div>
+            {form.weightKg&&<div className="flex justify-between text-gray-600 mt-1"><span>Total Weight</span><span className="font-semibold">{fmtKg(totalWt)}</span></div>}
           </div>
         )}
         <Btn size="lg" onClick={submit} loading={saving}>{Ico.check} Save Product</Btn>
@@ -779,9 +762,9 @@ function ItemFormModal({ item, onSave, onClose, saving }) {
   );
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════════════
 // CUSTOMERS
-// ═══════════════════════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════════════
 function CustomersPage({ customers, setCustomers, orders, notify }) {
   const [showForm, setShowForm] = useState(false);
   const [editId,   setEditId]   = useState(null);
@@ -819,35 +802,32 @@ function CustomersPage({ customers, setCustomers, orders, notify }) {
   };
 
   return (
-    <div className="px-4 py-5 slide-up">
+    <div className="px-4 py-4 slide-up">
       <div className="flex items-center justify-between mb-4">
-        <h2 className="font-black text-purple-950 text-xl">Clients</h2>
+        <h2 className="font-bold text-gray-800 text-lg">Customers</h2>
         <Btn onClick={() => { setEditId(null); setShowForm(true); }}>{Ico.plus} Add</Btn>
       </div>
-      <div className="relative mb-4">
-        <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-purple-400">🔍</span>
-        <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search clients…" className="w-full border-2 border-purple-100 rounded-xl pl-9 pr-4 py-2.5 text-sm bg-white font-medium" />
-      </div>
+      <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="🔍 Search customers…" className="w-full border border-gray-200 rounded-xl px-4 py-2.5 text-sm bg-white mb-4" />
       {filtered.length===0 ? (
-        <EmptyState icon="👥" title="No clients yet" sub="Add your first client" action={<Btn onClick={() => setShowForm(true)}>{Ico.plus} Add Client</Btn>} />
+        <EmptyState icon="👥" title="No customers yet" sub="Add your first customer" action={<Btn onClick={() => setShowForm(true)}>{Ico.plus} Add Customer</Btn>} />
       ) : (
         <div className="space-y-3">
           {filtered.map(c => {
             const cnt = orders.filter(o=>o.customerId===c.id).length;
             return (
-              <Card key={c.id} className="card-hover">
+              <Card key={c.id}>
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-3 flex-1 min-w-0">
-                    <div className="w-10 h-10 rounded-2xl muna-gradient flex items-center justify-center text-white font-black text-sm flex-shrink-0">{c.name[0]?.toUpperCase()}</div>
+                    <div className="w-9 h-9 rounded-full bg-gradient-to-br from-pink-400 to-rose-500 flex items-center justify-center text-white font-bold text-sm flex-shrink-0">{c.name[0]?.toUpperCase()}</div>
                     <div className="min-w-0">
-                      <p className="font-extrabold text-purple-950 truncate">{c.name}</p>
-                      <p className="text-xs text-purple-400 font-semibold">{c.phone||'No phone'} · {cnt} order{cnt!==1?'s':''}</p>
-                      {c.address && <p className="text-xs text-purple-400 truncate">📍 {c.address}</p>}
+                      <p className="font-semibold text-gray-800 truncate">{c.name}</p>
+                      <p className="text-xs text-gray-400">{c.phone||'No phone'} · {cnt} order{cnt!==1?'s':''}</p>
+                      {c.address && <p className="text-xs text-gray-400 truncate">📍 {c.address}</p>}
                     </div>
                   </div>
                   <div className="flex gap-1 ml-2">
-                    <button onClick={() => { setEditId(c.id); setShowForm(true); }} className="p-2 text-purple-300 hover:text-purple-700 rounded-xl hover:bg-purple-50 transition-colors">{Ico.edit}</button>
-                    <button onClick={() => del(c.id)} className="p-2 text-purple-300 hover:text-red-500 rounded-xl hover:bg-red-50 transition-colors">{Ico.trash}</button>
+                    <button onClick={() => { setEditId(c.id); setShowForm(true); }} className="p-2 text-gray-400 hover:text-pink-500 rounded-xl hover:bg-pink-50">{Ico.edit}</button>
+                    <button onClick={() => del(c.id)} className="p-2 text-gray-400 hover:text-red-500 rounded-xl hover:bg-red-50">{Ico.trash}</button>
                   </div>
                 </div>
               </Card>
@@ -856,7 +836,7 @@ function CustomersPage({ customers, setCustomers, orders, notify }) {
         </div>
       )}
       {showForm && (
-        <Modal title={editId?'Edit Client':'New Client'} onClose={() => { setShowForm(false); setEditId(null); }}>
+        <Modal title={editId?'Edit Customer':'New Customer'} onClose={() => { setShowForm(false); setEditId(null); }}>
           <CustomerForm customer={editId?customers.find(c=>c.id===editId):null} onSave={save} saving={saving} />
         </Modal>
       )}
@@ -872,17 +852,17 @@ function CustomerForm({ customer, onSave, saving }) {
       <Input label="Full Name" required value={form.name} onChange={e=>f('name',e.target.value)} placeholder="e.g. Nilufar Karimova" />
       <Input label="Phone Number" type="tel" value={form.phone} onChange={e=>f('phone',e.target.value)} placeholder="+998 90 123 45 67" />
       <div>
-        <label className="block text-xs font-bold text-purple-800 mb-1.5">Address</label>
-        <textarea value={form.address} onChange={e=>f('address',e.target.value)} rows={2} className="w-full border-2 border-purple-100 rounded-xl px-3.5 py-2.5 text-sm bg-purple-50/30 resize-none font-medium" placeholder="City, district, street…" />
+        <label className="block text-xs font-semibold text-gray-500 mb-1">Address</label>
+        <textarea value={form.address} onChange={e=>f('address',e.target.value)} rows={2} className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm bg-gray-50 resize-none" placeholder="City, district, street…" />
       </div>
-      <Btn size="lg" onClick={() => { if(!form.name.trim()) return alert('Name required.'); onSave(form); }} loading={saving}>{Ico.check} Save Client</Btn>
+      <Btn size="lg" onClick={() => { if(!form.name.trim()) return alert('Name required.'); onSave(form); }} loading={saving}>{Ico.check} Save Customer</Btn>
     </div>
   );
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════════════
 // EXPENSES
-// ═══════════════════════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════════════
 function ExpensesPage({ expenses, setExpenses, salespersons, notify }) {
   const [showForm,    setShowForm]    = useState(false);
   const [editId,      setEditId]      = useState(null);
@@ -926,18 +906,18 @@ function ExpensesPage({ expenses, setExpenses, salespersons, notify }) {
   const TYPE_ICONS = { Salary:'👤', Cargo:'🚢', Office:'🏢', Marketing:'📢', Other:'📌' };
 
   return (
-    <div className="px-4 py-5 slide-up">
+    <div className="px-4 py-4 slide-up">
       <div className="flex items-center justify-between mb-4">
         <div>
-          <h2 className="font-black text-purple-950 text-xl">Expenses</h2>
-          <p className="text-xs text-purple-400 font-semibold">Showing: <span className="font-black text-red-500">{fmtUSD(total)}</span></p>
+          <h2 className="font-bold text-gray-800 text-lg">Expenses</h2>
+          <p className="text-xs text-gray-400">Showing: <span className="font-semibold text-red-500">{fmtUSD(total)}</span></p>
         </div>
         <Btn onClick={() => { setEditId(null); setShowForm(true); }}>{Ico.plus} Add</Btn>
       </div>
       <div className="flex gap-2 overflow-x-auto pb-2 mb-4 -mx-4 px-4">
         {['All',...EXP_TYPES].map(t => (
           <button key={t} onClick={() => setFilterType(t)}
-            className={`flex-shrink-0 px-3.5 py-1.5 rounded-full text-xs font-bold transition-all ${filterType===t?'bg-purple-800 text-white shadow-sm':'bg-white text-purple-500 border-2 border-purple-100 hover:border-purple-300'}`}>{t}</button>
+            className={`flex-shrink-0 px-3 py-1.5 rounded-full text-xs font-semibold transition-colors ${filterType===t?'bg-pink-500 text-white':'bg-white text-gray-500 border border-gray-200'}`}>{t}</button>
         ))}
       </div>
       {filtered.length===0 ? (
@@ -945,22 +925,19 @@ function ExpensesPage({ expenses, setExpenses, salespersons, notify }) {
       ) : (
         <div className="space-y-2">
           {filtered.map(exp => (
-            <Card key={exp.id} className="card-hover">
+            <Card key={exp.id}>
               <div className="flex items-center gap-3">
-                <div className="w-11 h-11 rounded-2xl bg-purple-50 flex items-center justify-center text-2xl flex-shrink-0">{TYPE_ICONS[exp.type]||'📌'}</div>
+                <div className="w-10 h-10 rounded-xl bg-gray-100 flex items-center justify-center text-xl flex-shrink-0">{TYPE_ICONS[exp.type]||'📌'}</div>
                 <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2 mb-0.5">
-                    <span className="text-xs bg-purple-50 text-purple-700 px-2 py-0.5 rounded-full font-bold">{exp.type}</span>
-                    <span className="text-xs text-purple-400 font-semibold">{fmtDate(exp.date)}</span>
-                  </div>
-                  <p className="font-extrabold text-purple-950 truncate">{exp.description}</p>
-                  <p className="text-xs text-purple-400 font-semibold">Paid by: {exp.paidBy}</p>
+                  <div className="flex items-center gap-2 mb-0.5"><span className="text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full font-medium">{exp.type}</span><span className="text-xs text-gray-400">{fmtDate(exp.date)}</span></div>
+                  <p className="font-semibold text-gray-800 truncate">{exp.description}</p>
+                  <p className="text-xs text-gray-400">Paid by: {exp.paidBy}</p>
                 </div>
                 <div className="text-right ml-2">
-                  <p className="font-black text-red-500">{fmtUSD(exp.amountUSD)}</p>
+                  <p className="font-bold text-red-500">{fmtUSD(exp.amountUSD)}</p>
                   <div className="flex gap-1 justify-end mt-1">
-                    <button onClick={() => { setEditId(exp.id); setShowForm(true); }} className="p-1.5 text-purple-300 hover:text-purple-700 transition-colors">{Ico.edit}</button>
-                    <button onClick={() => del(exp.id)} className="p-1.5 text-purple-300 hover:text-red-500 transition-colors">{Ico.trash}</button>
+                    <button onClick={() => { setEditId(exp.id); setShowForm(true); }} className="p-1 text-gray-400 hover:text-pink-500">{Ico.edit}</button>
+                    <button onClick={() => del(exp.id)} className="p-1 text-gray-400 hover:text-red-500">{Ico.trash}</button>
                   </div>
                 </div>
               </div>
@@ -990,8 +967,8 @@ function ExpenseForm({ expense, onSave, saving, salespersons }) {
       <Input label="Description" required value={form.description} onChange={e=>f('description',e.target.value)} placeholder="e.g. Monthly cargo payment" />
       <Input label="Amount (USD)" required type="number" min="0" step="0.01" value={form.amountUSD} onChange={e=>f('amountUSD',e.target.value)} placeholder="0.00" />
       <div>
-        <label className="block text-xs font-bold text-purple-800 mb-1.5">Paid By</label>
-        <input list="sp-opts" value={form.paidBy} onChange={e=>f('paidBy',e.target.value)} className="w-full border-2 border-purple-100 rounded-xl px-3.5 py-2.5 text-sm bg-purple-50/30 font-medium" placeholder="Name" />
+        <label className="block text-xs font-semibold text-gray-500 mb-1">Paid By</label>
+        <input list="sp-opts" value={form.paidBy} onChange={e=>f('paidBy',e.target.value)} className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm bg-gray-50" placeholder="Name" />
         <datalist id="sp-opts">{sp.map(s=><option key={s} value={s}/>)}</datalist>
       </div>
       <Btn size="lg" onClick={() => { if(!form.description.trim()||!form.amountUSD) return alert('Fill required fields.'); onSave(form); }} loading={saving}>{Ico.check} Save Expense</Btn>
@@ -999,9 +976,9 @@ function ExpenseForm({ expense, onSave, saving, salespersons }) {
   );
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════════════
 // SETTINGS
-// ═══════════════════════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════════════
 function SettingsPage({ settings, setSettings, notify }) {
   const [krwToUsd, setKrwToUsd] = useState(settings.krwToUsd);
   const [spList,   setSpList]   = useState((settings.salespersons||[]).join(', '));
@@ -1012,32 +989,27 @@ function SettingsPage({ settings, setSettings, notify }) {
   };
 
   return (
-    <div className="px-4 py-5 slide-up space-y-4">
-      <h2 className="font-black text-purple-950 text-xl">Settings</h2>
+    <div className="px-4 py-4 slide-up space-y-4">
+      <h2 className="font-bold text-gray-800 text-lg">Settings</h2>
       <Card>
-        <p className="font-extrabold text-purple-900 mb-3">Exchange Rate</p>
+        <p className="font-semibold text-gray-700 mb-3">Exchange Rate</p>
         <div className="space-y-2">
           <Input label="KRW → USD Rate" type="number" step="0.000001" value={krwToUsd} onChange={e=>setKrwToUsd(e.target.value)} />
-          <p className="text-xs text-purple-400 font-semibold">₩1,000 = ${(1000*(+krwToUsd||0)).toFixed(2)} · Update from Google "KRW to USD"</p>
+          <p className="text-xs text-gray-400">₩1,000 = ${(1000*(+krwToUsd||0)).toFixed(2)} · Update from Google "KRW to USD"</p>
         </div>
       </Card>
       <Card>
-        <p className="font-extrabold text-purple-900 mb-3">Team Members</p>
+        <p className="font-semibold text-gray-700 mb-3">Team Members</p>
         <div>
-          <label className="block text-xs font-bold text-purple-800 mb-1.5">Salespersons (comma-separated)</label>
-          <textarea value={spList} onChange={e=>setSpList(e.target.value)} rows={2} className="w-full border-2 border-purple-100 rounded-xl px-3.5 py-2.5 text-sm bg-purple-50/30 resize-none font-medium" placeholder="Amir, Zara, Dina…" />
+          <label className="block text-xs font-semibold text-gray-500 mb-1">Salespersons (comma-separated)</label>
+          <textarea value={spList} onChange={e=>setSpList(e.target.value)} rows={2} className="w-full border border-gray-200 rounded-xl px-3 py-2.5 text-sm bg-gray-50 resize-none" placeholder="Amir, Zara, Dina…" />
         </div>
       </Card>
       <Btn size="lg" onClick={save}>{Ico.check} Save Settings</Btn>
       <Card>
-        <div className="flex items-center gap-3 mb-2">
-          <MunaLogo size={40} />
-          <div>
-            <p className="font-black text-purple-950">Muna Manager</p>
-            <p className="text-xs text-purple-400 font-semibold">v2.0 · Supabase Edition</p>
-          </div>
-        </div>
-        <p className="text-xs text-purple-400">Data stored securely in your Supabase database.</p>
+        <p className="font-semibold text-gray-700 mb-1">About</p>
+        <p className="text-sm text-gray-500">Muna Manager v2.0 · Supabase Edition</p>
+        <p className="text-xs text-gray-400 mt-1">Data stored in your Supabase PostgreSQL database.</p>
       </Card>
     </div>
   );
