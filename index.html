@@ -565,14 +565,14 @@ function OrderForm({order,orderItems,customers,catalog,settings,salespersons,onS
     salesperson:order?.salesperson||sp[0]||'',
     notes:      order?.notes||'',
   });
-  const [items,setItems]=useState(orderItems?.length?orderItems:[{productId:'',quantity:1,priceUZS:'',type:'B2C'}]);
+  const [items,setItems]=useState(orderItems?.length?orderItems.map(i=>({...i,discountPct:0})):[{productId:'',quantity:1,priceUZS:'',discountPct:0,type:'B2C'}]);
   const [prodSearch,setProdSearch]=useState('');
   const [activeItemIdx,setActiveItemIdx]=useState(null);
   const [custSearch,setCustSearch]=useState('');
   const [custOpen,setCustOpen]=useState(false);
   const f=(k,v)=>setForm(p=>({...p,[k]:v}));
 
-  const addItem=()=>setItems(p=>[...p,{productId:'',quantity:1,priceUZS:'',type:'B2C'}]);
+  const addItem=()=>setItems(p=>[...p,{productId:'',quantity:1,priceUZS:'',discountPct:0,type:'B2C'}]);
   const removeItem=idx=>setItems(p=>p.filter((_,i)=>i!==idx));
   const updateItem=(idx,k,v)=>setItems(p=>p.map((it,i)=>{
     if(i!==idx) return it;
@@ -596,13 +596,21 @@ function OrderForm({order,orderItems,customers,catalog,settings,salespersons,onS
     return customers.filter(c=>(c.name||'').toLowerCase().includes(q)||(c.phone||'').includes(q)||(c.telegram||'').toLowerCase().includes(q)).slice(0,8);
   },[customers,custSearch]);
 
-  const orderTotal=items.reduce((s,i)=>s+(+i.priceUZS||0)*(+i.quantity||1),0);
+  const orderTotal=items.reduce((s,i)=>{
+    const unit=+i.priceUZS||0;
+    const disc=Math.min(100,Math.max(0,+i.discountPct||0));
+    return s+Math.round(unit*(1-disc/100))*(+i.quantity||1);
+  },0);
 
   const submit=()=>{
     const hasCustomer=form.customerId||custSearch.trim();
     if(!hasCustomer) return alert('Please enter a customer name.');
     if(items.every(i=>!i.productId&&!i.priceUZS)) return alert('Add at least one item.');
-    const validItems=items.filter(i=>i.productId||i.priceUZS);
+    const validItems=items.filter(i=>i.productId||i.priceUZS).map(i=>{
+      const unit=+i.priceUZS||0;
+      const disc=+i.discountPct||0;
+      return {...i,priceUZS:Math.round(unit*(1-disc/100))};
+    });
     const orderData={...form};
     if(!form.customerId&&custSearch.trim()) orderData.newCustomerName=custSearch.trim();
     onSave(orderData,validItems);
@@ -665,9 +673,14 @@ function OrderForm({order,orderItems,customers,catalog,settings,salespersons,onS
           <div className="space-y-2">
             {items.map((item,idx)=>{
               const prod=catalog.find(p=>p.id===item.productId);
+              const unitPrice=+item.priceUZS||0;
+              const disc=Math.min(100,Math.max(0,+item.discountPct||0));
+              const effectivePrice=Math.round(unitPrice*(1-disc/100));
+              const qty=+item.quantity||1;
+              const lineTotal=effectivePrice*qty;
               const shipping=(prod?.weightGrams/1000)*(+settings?.shippingRateKRW||15000);
-              const cost=prod?(+prod.estimatedCostKRW+shipping)*(+settings?.uzsPerKrw||8):0;
-              const profit=(+item.priceUZS||0)*(+item.quantity||1)-cost*(+item.quantity||1);
+              const costPerUnit=prod?(+prod.estimatedCostKRW+shipping)*(+settings?.uzsPerKrw||8):0;
+              const profit=lineTotal-costPerUnit*qty;
               return(
                 <div key={idx} className="border border-gray-200 rounded-xl p-3 space-y-2 bg-gray-50">
                   <div className="flex items-start gap-2">
@@ -702,19 +715,36 @@ function OrderForm({order,orderItems,customers,catalog,settings,salespersons,onS
                   <div className="grid grid-cols-3 gap-2">
                     <Inp label="Qty" type="number" min="1" value={item.quantity} onChange={e=>updateItem(idx,'quantity',e.target.value)}/>
                     <div>
-                      <label className="block text-xs font-bold text-gray-500 mb-1">Sale Price</label>
-                      <div className={`border rounded-xl px-3 py-2 text-sm ${prod&&item.priceUZS?'bg-emerald-50 border-emerald-200 text-emerald-700 font-bold':'bg-gray-100 border-gray-200 text-gray-400 italic'}`}>
-                        {prod&&item.priceUZS?fmtUZS(+item.priceUZS):'select product'}
+                      <label className="block text-xs font-bold text-gray-500 mb-1">Discount %</label>
+                      <div className="flex items-center border border-gray-200 rounded-xl bg-white overflow-hidden">
+                        <input type="number" min="0" max="100" value={item.discountPct||''} onChange={e=>updateItem(idx,'discountPct',e.target.value)}
+                          placeholder="0" className="w-full px-3 py-2 text-sm outline-none bg-transparent"/>
+                        <span className="text-gray-400 text-sm pr-3 font-bold">%</span>
                       </div>
                     </div>
                     <Sel label="Type" value={item.type} onChange={e=>updateItem(idx,'type',e.target.value)}>
                       <option>B2C</option><option>B2B</option>
                     </Sel>
                   </div>
-                  {prod&&item.priceUZS&&(
-                    <p className={`text-xs font-bold ${profit>=0?'text-emerald-600':'text-red-500'}`}>
-                      Profit: {fmtUZS(profit)} {profit<0?'⚠️':'✓'}
-                    </p>
+                  {prod&&(
+                    <div className="bg-white rounded-lg px-3 py-2 border border-gray-100 space-y-0.5">
+                      <div className="flex items-center justify-between text-xs text-gray-500">
+                        <span>Unit price</span>
+                        <span className={disc>0?'line-through text-gray-400':'font-bold text-gray-700'}>{unitPrice>0?fmtUZS(unitPrice):<span className="italic text-orange-400">not set in catalog</span>}</span>
+                      </div>
+                      {disc>0&&<div className="flex items-center justify-between text-xs">
+                        <span className="text-pink-500 font-bold">After {disc}% off</span>
+                        <span className="font-bold text-pink-600">{fmtUZS(effectivePrice)}</span>
+                      </div>}
+                      <div className="flex items-center justify-between text-sm font-black border-t border-gray-100 pt-1 mt-1">
+                        <span className="text-gray-600">× {qty} = Total</span>
+                        <span className="text-gray-800">{fmtUZS(lineTotal)}</span>
+                      </div>
+                      {costPerUnit>0&&<div className={`flex items-center justify-between text-xs font-bold pt-0.5 ${profit>=0?'text-emerald-600':'text-red-500'}`}>
+                        <span>Profit</span>
+                        <span>{profit>=0?'+':''}{fmtUZS(profit)} {profit<0?'⚠️':'✓'}</span>
+                      </div>}
+                    </div>
                   )}
                 </div>
               );
