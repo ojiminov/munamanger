@@ -10,14 +10,17 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
   <style>
     *{box-sizing:border-box;margin:0;padding:0}
     body{font-family:'Nunito',sans-serif;background:#fdf2f8;color:#1f2937}
+    input[type=number]::-webkit-inner-spin-button,input[type=number]::-webkit-outer-spin-button{-webkit-appearance:none;margin:0}
+    input[type=number]{-moz-appearance:textfield}
     ::-webkit-scrollbar{width:5px;height:5px}
     ::-webkit-scrollbar-thumb{background:#f9a8d4;border-radius:4px}
     input:focus,select:focus,textarea:focus{outline:none;border-color:#ec4899!important;box-shadow:0 0 0 2px rgba(236,72,153,.15)}
     .tbl{width:100%;border-collapse:collapse;font-size:13px}
-    .tbl th{background:#fff9fb;color:#9ca3af;font-weight:700;font-size:11px;text-transform:uppercase;letter-spacing:.05em;padding:10px 12px;text-align:left;border-bottom:1px solid #fce7f3;white-space:nowrap;position:sticky;top:0;z-index:1}
+    .tbl th{background:#fff9fb;color:#9ca3af;font-weight:700;font-size:11px;text-transform:uppercase;letter-spacing:.05em;padding:10px 12px;text-align:left;border-bottom:1px solid #fce7f3;white-space:nowrap;position:sticky;top:0;z-index:2}
     .tbl td{padding:9px 12px;border-bottom:1px solid #fce7f3;vertical-align:middle}
     .tbl tr:hover td{background:#fff5f8}
     .tbl tr:last-child td{border-bottom:none}
@@ -170,8 +173,8 @@ const StatBox=({label,value,sub,color='pink'})=>{
 
 const Card=({children,className=''})=><div className={`bg-white rounded-2xl border border-pink-50 shadow-sm ${className}`}>{children}</div>;
 const TblWrap=({children})=>(
-  <div className="bg-white rounded-2xl border border-pink-50 shadow-sm overflow-hidden">
-    <div className="overflow-x-auto"><table className="tbl">{children}</table></div>
+  <div className="bg-white rounded-2xl border border-pink-50 shadow-sm" style={{overflow:'auto',maxHeight:'calc(100vh - 160px)'}}>
+    <table className="tbl">{children}</table>
   </div>
 );
 const Empty=({icon,title,sub,action})=>(
@@ -445,11 +448,17 @@ function OrdersPage({orders,setOrders,orderItems,setOrderItems,customers,setCust
     try{
       // Auto-create new customer if only a name was typed
       if(!orderData.customerId&&orderData.newCustomerName){
-        const{data:nc,error:ce}=await db.from('customers').insert({name:orderData.newCustomerName}).select().single();
+        const newCustPayload={
+          name:orderData.newCustomerName,
+          phone:orderData.newCustomerPhone||null,
+          telegram:orderData.newCustomerTelegram||null,
+          address:orderData.newCustomerAddress||null,
+        };
+        const{data:nc,error:ce}=await db.from('customers').insert(newCustPayload).select().single();
         if(ce) throw ce;
         setCustomers(prev=>[...prev,fromDB.customer(nc)].sort((a,b)=>a.name.localeCompare(b.name)));
         orderData={...orderData,customerId:nc.id};
-        notify(`New customer "${nc.name}" created`);
+        notify(`New customer "${nc.name}" created & added to Customers`);
       }
       if(editOrder){
         const{error}=await db.from('orders').update(toDB.order(orderData)).eq('id',editOrder.id);
@@ -521,8 +530,8 @@ function OrdersPage({orders,setOrders,orderItems,setOrderItems,customers,setCust
             const total=items.reduce((s,i)=>s+(+i.priceUZS||0)*(+i.quantity||1),0);
             return{Date:o.createdAt,Customer:c?.name||'',Phone:c?.phone||'',Status:o.status,Payment:o.paymentStatus,Total_UZS:total,Salesperson:o.salesperson||'',Notes:o.notes||''};
           });
-          exportCSV(rows,['Date','Customer','Phone','Status','Payment','Total_UZS','Salesperson','Notes'],`muna-orders-${today()}.csv`);
-        }}>⬇ Export CSV</Btn>
+          exportXLSX(rows,['Date','Customer','Phone','Status','Payment','Total_UZS','Salesperson','Notes'],`muna-orders-${today()}.xlsx`);
+        }}>⬇ Export Excel</Btn>
         <Btn size="sm" onClick={()=>{setEditOrder(null);setShowForm(true);}}>+ New Order</Btn>
       </div>
 
@@ -642,6 +651,9 @@ function OrderForm({order,orderItems,customers,catalog,settings,salespersons,onS
   const [activeItemIdx,setActiveItemIdx]=useState(null);
   const [custSearch,setCustSearch]=useState('');
   const [custOpen,setCustOpen]=useState(false);
+  const [newCustPhone,setNewCustPhone]=useState('');
+  const [newCustTelegram,setNewCustTelegram]=useState('');
+  const [newCustAddress,setNewCustAddress]=useState('');
   const f=(k,v)=>setForm(p=>({...p,[k]:v}));
 
   const addItem=()=>setItems(p=>[...p,{productId:'',quantity:1,priceUZS:'',discountPct:0,type:'B2C'}]);
@@ -684,7 +696,12 @@ function OrderForm({order,orderItems,customers,catalog,settings,salespersons,onS
       return {...i,priceUZS:Math.round(unit*(1-disc/100))};
     });
     const orderData={...form};
-    if(!form.customerId&&custSearch.trim()) orderData.newCustomerName=custSearch.trim();
+    if(!form.customerId&&custSearch.trim()){
+      orderData.newCustomerName=custSearch.trim();
+      orderData.newCustomerPhone=newCustPhone.trim();
+      orderData.newCustomerTelegram=newCustTelegram.trim();
+      orderData.newCustomerAddress=newCustAddress.trim();
+    }
     onSave(orderData,validItems);
   };
 
@@ -723,8 +740,13 @@ function OrderForm({order,orderItems,customers,catalog,settings,salespersons,onS
                      </button>
                    ))}
                    {custSearch.trim()&&!filteredCustomers.find(c=>c.name.toLowerCase()===custSearch.trim().toLowerCase())&&(
-                     <div className="px-3 py-2 text-xs bg-yellow-50 border-t border-yellow-100 text-yellow-700">
-                       <span className="font-bold">"{custSearch}"</span> — new customer, will be created on save
+                     <div className="px-3 py-2 bg-pink-50 border-t border-pink-100">
+                       <p className="text-xs font-bold text-pink-600 mb-2">✨ New customer — fill in details (optional)</p>
+                       <div className="space-y-1.5">
+                         <input value={newCustPhone} onChange={e=>setNewCustPhone(e.target.value)} onMouseDown={e=>e.stopPropagation()} placeholder="Phone number" className="w-full border border-gray-200 rounded-lg px-2 py-1.5 text-xs bg-white focus:border-pink-400 focus:outline-none"/>
+                         <input value={newCustTelegram} onChange={e=>setNewCustTelegram(e.target.value)} onMouseDown={e=>e.stopPropagation()} placeholder="Telegram (@username)" className="w-full border border-gray-200 rounded-lg px-2 py-1.5 text-xs bg-white focus:border-pink-400 focus:outline-none"/>
+                         <input value={newCustAddress} onChange={e=>setNewCustAddress(e.target.value)} onMouseDown={e=>e.stopPropagation()} placeholder="Address (optional)" className="w-full border border-gray-200 rounded-lg px-2 py-1.5 text-xs bg-white focus:border-pink-400 focus:outline-none"/>
+                       </div>
                      </div>
                    )}
                    {!custSearch.trim()&&filteredCustomers.length===0&&(
@@ -1024,15 +1046,15 @@ function CatalogPage({catalog,setCatalog,settings,notify}) {
         ?<Empty icon="🗂️" title="No products found" sub="Add products to your catalog" action={<Btn onClick={()=>setShowForm(true)}>+ Add Product</Btn>}/>
         :<TblWrap>
           <thead><tr>
-            <th>Brand</th><th>Name</th><th>Category</th><th>Skin</th><th>Weight</th><th>Cost (KRW)</th><th>Ship (KRW)</th><th>B2C Price</th><th>B2C Profit</th><th>B2B Price</th><th>B2B Profit</th><th></th>
+            <th>Brand</th><th>Name</th><th>Category</th><th>Skin</th><th>Weight</th><th>Cost (KRW)</th><th>Ship (KRW)</th><th>B2C Price</th><th>B2C Net Profit</th><th>B2B Price</th><th>B2B Ship (UZS)</th><th>B2B Net Profit</th><th></th>
           </tr></thead>
           <tbody>
             {filtered.map(p=>{
               const ship=(p.weightGrams/1000)*(+settings.shippingRateKRW||15000);
               const rate=+settings.uzsPerKrw||8;
-              const totalCost=(+p.estimatedCostKRW||0)+ship;
-              const b2cP=(+p.suggestedB2CPrice||0)-totalCost*rate;
-              const b2bP=(+p.suggestedB2BPrice||0)-totalCost*rate;
+              const productCost=+p.estimatedCostKRW||0;
+              const b2cP=(+p.suggestedB2CPrice||0)-(productCost+ship)*rate; // B2C: price - cost - shipping
+              const b2bP=(+p.suggestedB2BPrice||0)-productCost*rate;        // B2B: price - cost only
               return(
                 <tr key={p.id}>
                   <td className="font-bold text-pink-600 whitespace-nowrap">{p.brand}</td>
@@ -1045,6 +1067,7 @@ function CatalogPage({catalog,setCatalog,settings,notify}) {
                   <td className="font-bold text-emerald-600 whitespace-nowrap">{p.suggestedB2CPrice?fmtUZS(p.suggestedB2CPrice):'—'}</td>
                   <td className={`font-bold text-xs whitespace-nowrap ${p.suggestedB2CPrice?(b2cP>=0?'text-emerald-700':'text-red-500'):'text-gray-300'}`}>{p.suggestedB2CPrice?fmtUZS(b2cP):'—'}</td>
                   <td className="font-bold text-indigo-600 whitespace-nowrap">{p.suggestedB2BPrice?fmtUZS(p.suggestedB2BPrice):'—'}</td>
+                  <td className="text-orange-500 text-xs whitespace-nowrap">{p.suggestedB2BPrice?fmtUZS(Math.round(ship*(+settings.uzsPerKrw||8))):'—'}</td>
                   <td className={`font-bold text-xs whitespace-nowrap ${p.suggestedB2BPrice?(b2bP>=0?'text-indigo-700':'text-red-500'):'text-gray-300'}`}>{p.suggestedB2BPrice?fmtUZS(b2bP):'—'}</td>
                   <td>
                     <div className="flex gap-1">
@@ -1066,7 +1089,7 @@ function CatalogPage({catalog,setCatalog,settings,notify}) {
 function ProductForm({product,settings,onSave,onClose,saving}) {
   const [form,setForm]=useState({
     brand:product?.brand||'',name:product?.name||'',category:product?.category||'Serum',
-    skinType:product?.skinType||'All',weightGrams:product?.weightGrams||0,
+    skinType:product?.skinType||'All',weightGrams:product?.weightGrams||'',
     estimatedCostKRW:product?.estimatedCostKRW||'',
     suggestedB2CPrice:product?.suggestedB2CPrice||'',suggestedB2BPrice:product?.suggestedB2BPrice||'',
     notes:product?.notes||'',
@@ -1074,9 +1097,9 @@ function ProductForm({product,settings,onSave,onClose,saving}) {
   const f=(k,v)=>setForm(p=>({...p,[k]:v}));
   const ship=(form.weightGrams/1000)*(+settings?.shippingRateKRW||15000);
   const rate=+settings?.uzsPerKrw||8;
-  const totalCost=(+form.estimatedCostKRW||0)+ship;
-  const b2cP=(+form.suggestedB2CPrice||0)-totalCost*rate;
-  const b2bP=(+form.suggestedB2BPrice||0)-totalCost*rate;
+  const productCost=+form.estimatedCostKRW||0;
+  const b2cP=(+form.suggestedB2CPrice||0)-(productCost+ship)*rate; // B2C: price - cost - shipping
+  const b2bP=(+form.suggestedB2BPrice||0)-productCost*rate;        // B2B: price - cost only
   return(
     <Modal title={product?'Edit Product':'Add Product'} onClose={onClose} wide>
       <div className="space-y-3">
@@ -1195,21 +1218,34 @@ function ProcurementPage({orders,orderItems,catalog,settings}) {
 }
 
 // ── FINANCE PAGE ──────────────────────────────────────────────
-function FinancePage({expenses,setExpenses,transfers,setTransfers,capital,setCapital,orders,orderItems,settings,notify}) {
+function FinancePage({expenses,setExpenses,transfers,setTransfers,capital,setCapital,orders,orderItems,catalog,settings,notify}) {
   const [tab,setTab]=useState('overview');
   const rate=+settings.uzsPerKrw||8;
+  const shipRateKRW=+settings.shippingRateKRW||15000;
 
-  const {totalRevUZS,totalExpKRW,totalTransKRW,totalTransUZS,totalCapUZS,totalCostUZS,netProfit}=useMemo(()=>{
+  const {totalRevUZS,totalExpKRW,totalTransKRW,totalTransUZS,totalCapUZS,totalCostUZS,netProfit,b2bRevUZS,b2bShipUZS,b2bNetUZS,b2cRevUZS}=useMemo(()=>{
     const paidOrderIds=new Set((orders||[]).filter(o=>o.paymentStatus==='Paid').map(o=>o.id));
-    const totalRevUZS=(orderItems||[]).filter(i=>paidOrderIds.has(i.orderId)).reduce((s,i)=>s+(+i.priceUZS||0)*(+i.quantity||1),0);
+    const paidItems=(orderItems||[]).filter(i=>paidOrderIds.has(i.orderId));
+    const totalRevUZS=paidItems.reduce((s,i)=>s+(+i.priceUZS||0)*(+i.quantity||1),0);
     const totalExpKRW=expenses.reduce((s,e)=>s+(+e.amountKRW||0),0);
     const totalTransKRW=transfers.reduce((s,t)=>s+(+t.amountKRW||0),0);
     const totalTransUZS=transfers.reduce((s,t)=>s+(+t.amountUZS||0),0);
     const totalCapUZS=capital.reduce((s,c)=>s+(c.currency==='KRW'?(+c.amountKRW||0)*rate:(+c.amountUZS||0)),0);
     const totalCostUZS=(totalExpKRW+totalTransKRW)*rate;
     const netProfit=totalRevUZS-totalCostUZS;
-    return{totalRevUZS,totalExpKRW,totalTransKRW,totalTransUZS,totalCapUZS,totalCostUZS,netProfit};
-  },[orders,orderItems,expenses,transfers,capital,rate]);
+    // B2B breakdown
+    const b2bItems=paidItems.filter(i=>i.type==='B2B');
+    const b2cItems=paidItems.filter(i=>i.type!=='B2B');
+    const b2bRevUZS=b2bItems.reduce((s,i)=>s+(+i.priceUZS||0)*(+i.quantity||1),0);
+    const b2cRevUZS=b2cItems.reduce((s,i)=>s+(+i.priceUZS||0)*(+i.quantity||1),0);
+    const b2bShipUZS=b2bItems.reduce((s,i)=>{
+      const prod=(catalog||[]).find(p=>p.id===i.productId);
+      const shipKRW=prod?((+prod.weightGrams||0)/1000)*shipRateKRW:0;
+      return s+Math.round(shipKRW*rate)*(+i.quantity||1);
+    },0);
+    const b2bNetUZS=b2bRevUZS-b2bShipUZS;
+    return{totalRevUZS,totalExpKRW,totalTransKRW,totalTransUZS,totalCapUZS,totalCostUZS,netProfit,b2bRevUZS,b2bShipUZS,b2bNetUZS,b2cRevUZS};
+  },[orders,orderItems,expenses,transfers,capital,catalog,rate,shipRateKRW]);
 
   return(
     <div className="space-y-4 slide-up">
@@ -1226,6 +1262,28 @@ function FinancePage({expenses,setExpenses,transfers,setTransfers,capital,setCap
         <StatBox label="Local Expenses"   value={fmtKRW(totalExpKRW)}    sub="Salary, cargo etc"               color="pink"/>
         <StatBox label="Capital Added"    value={fmtUZS(totalCapUZS)}    sub="Total invested"                  color="violet"/>
       </div>
+      {/* B2B breakdown */}
+      {b2bRevUZS>0&&(
+        <div className="rounded-2xl border border-indigo-100 bg-indigo-50 p-4">
+          <p className="text-xs font-black text-indigo-500 mb-3 uppercase tracking-wide">B2B Breakdown (Paid Orders)</p>
+          <div className="grid grid-cols-3 gap-3">
+            <div className="bg-white rounded-xl p-3 text-center border border-indigo-100">
+              <p className="text-xs text-gray-400 font-semibold mb-1">B2B Revenue</p>
+              <p className="font-black text-indigo-700 text-sm">{fmtUZS(b2bRevUZS)}</p>
+            </div>
+            <div className="bg-white rounded-xl p-3 text-center border border-orange-100">
+              <p className="text-xs text-gray-400 font-semibold mb-1">Shipping Cost</p>
+              <p className="font-black text-orange-500 text-sm">− {fmtUZS(b2bShipUZS)}</p>
+              <p className="text-xs text-gray-300">per product weight</p>
+            </div>
+            <div className={`rounded-xl p-3 text-center border ${b2bNetUZS>=0?'bg-white border-emerald-100':'bg-red-50 border-red-100'}`}>
+              <p className="text-xs text-gray-400 font-semibold mb-1">B2B Net Profit</p>
+              <p className={`font-black text-sm ${b2bNetUZS>=0?'text-emerald-700':'text-red-600'}`}>{fmtUZS(b2bNetUZS)}</p>
+            </div>
+          </div>
+          <p className="text-xs text-gray-400 mt-2">B2C Revenue: {fmtUZS(b2cRevUZS)}</p>
+        </div>
+      )}
 
       {/* Tabs */}
       <div className="flex gap-2">
@@ -1631,7 +1689,17 @@ function TeamTab({orders,orderItems,settings}) {
   );
 }
 
-// ── CSV EXPORT HELPERS ────────────────────────────────────────
+// ── EXCEL EXPORT HELPERS ──────────────────────────────────────
+function exportXLSX(rows,headers,filename){
+  const wsData=[headers,...rows.map(r=>headers.map(h=>r[h]??''))];
+  const ws=XLSX.utils.aoa_to_sheet(wsData);
+  // Auto column widths
+  ws['!cols']=headers.map(h=>({wch:Math.max(h.length,12)}));
+  const wb=XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb,ws,'Orders');
+  XLSX.writeFile(wb,filename);
+}
+// Keep CSV helper for any other uses
 function exportCSV(rows,headers,filename){
   const lines=[headers.join(','),...rows.map(r=>headers.map(h=>JSON.stringify(r[h]??'')).join(','))];
   const blob=new Blob([lines.join('\n')],{type:'text/csv'});
