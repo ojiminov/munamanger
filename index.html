@@ -80,6 +80,7 @@ const fromDB = {
   expense:  r => ({id:r.id,date:r.date,type:r.type,description:r.description,amountKRW:+r.amount_krw||0,paidBy:r.paid_by||''}),
   transfer: r => ({id:r.id,date:r.date,amountKRW:+r.amount_krw||0,amountUZS:+r.amount_uzs||0,notes:r.notes||''}),
   capital:  r => ({id:r.id,date:r.date,amountKRW:+r.amount_krw||0,amountUZS:+r.amount_uzs||0,currency:(+r.amount_krw||0)>0?'KRW':'UZS',person:r.person||'',notes:r.notes||''}),
+  finEntry: r => ({id:r.id,date:r.date,type:r.type,amountKRW:+r.amount_krw||0,amountUZS:+r.amount_uzs||0,description:r.description||'',createdAt:r.created_at?.slice(0,10)}),
 };
 const toDB = {
   catalog:  p => ({brand:p.brand,name:p.name,category:p.category||null,skin_type:p.skinType||'All',weight_grams:+p.weightGrams||0,estimated_cost_krw:+p.estimatedCostKRW||0,suggested_b2c_price_uzs:+p.suggestedB2CPrice||0,suggested_b2b_price_uzs:+p.suggestedB2BPrice||0,notes:p.notes||null}),
@@ -224,6 +225,7 @@ function App() {
   const [capital,    setCapital]    = useState([]);
   const [stock,      setStock]      = useState([]);
   const [stockLogs,  setStockLogs]  = useState([]);
+  const [finEntries, setFinEntries] = useState([]);
   const [settings,   setSettings]   = useState(()=>lsGet('settings',{shippingRateKRW:15000,uzsPerKrw:8,salespersons:['Nazokat','Namuna','Oybek','OJ']}));
   const [loading,    setLoading]    = useState(true);
   const [toast,      setToast]      = useState({msg:'',type:'success'});
@@ -238,7 +240,7 @@ function App() {
   useEffect(()=>{
     (async()=>{
       try{
-        const [ca,cu,or,oi,ex,tr,cp,st,sl]=await Promise.all([
+        const [ca,cu,or,oi,ex,tr,cp,st,sl,fe]=await Promise.all([
           db.from('catalog').select('*').order('brand'),
           db.from('customers').select('*').order('name'),
           db.from('orders').select('*').order('created_at',{ascending:false}),
@@ -248,6 +250,7 @@ function App() {
           db.from('capital').select('*').order('date',{ascending:false}),
           db.from('stock').select('*'),
           db.from('stock_logs').select('*').order('created_at',{ascending:false}),
+          db.from('finance_entries').select('*').order('date',{ascending:false}),
         ]);
         if(ca.error||cu.error||or.error||oi.error) throw new Error('Load failed');
         setCatalog(ca.data.map(fromDB.catalog));
@@ -259,6 +262,7 @@ function App() {
         setCapital((cp.data||[]).map(fromDB.capital));
         setStock((st.data||[]).map(fromDB.stock));
         setStockLogs((sl.data||[]).map(fromDB.stockLog));
+        setFinEntries((fe.data||[]).map(fromDB.finEntry));
       }catch(err){
         notify('Could not connect to database.','error');
       }finally{setLoading(false);}
@@ -267,7 +271,7 @@ function App() {
 
   useEffect(()=>{lsSet('settings',settings);},[settings]);
 
-  const ctx={catalog,setCatalog,customers,setCustomers,orders,setOrders,orderItems,setOrderItems,expenses,setExpenses,transfers,setTransfers,capital,setCapital,stock,setStock,stockLogs,setStockLogs,settings,setSettings,notify};
+  const ctx={catalog,setCatalog,customers,setCustomers,orders,setOrders,orderItems,setOrderItems,expenses,setExpenses,transfers,setTransfers,capital,setCapital,stock,setStock,stockLogs,setStockLogs,finEntries,setFinEntries,settings,setSettings,notify};
 
   if(loading) return(
     <div className="min-h-screen flex flex-col items-center justify-center gap-4" style={{background:'#fdf2f8'}}>
@@ -1486,276 +1490,117 @@ function StockForm({catalog,stock,editItem,onSave,onClose}) {
   );
 }
 
-function FinancePage({expenses,setExpenses,transfers,setTransfers,capital,setCapital,orders,orderItems,catalog,settings,notify}) {
-  const [tab,setTab]=useState('overview');
+function FinancePage({finEntries,setFinEntries,settings,notify}) {
   const rate=+settings.uzsPerKrw||8;
-  const shipRateKRW=+settings.shippingRateKRW||15000;
+  const [showForm,setShowForm]=useState(false);
+  const [editEntry,setEditEntry]=useState(null);
+  const [saving,setSaving]=useState(false);
+  const [typeFilter,setTypeFilter]=useState('All');
 
-  const {totalRevUZS,totalExpKRW,totalTransKRW,totalTransUZS,totalCapUZS,totalCostUZS,netProfit,b2bRevUZS,b2bShipUZS,b2bNetUZS,b2cRevUZS}=useMemo(()=>{
-    const paidOrderIds=new Set((orders||[]).filter(o=>o.paymentStatus==='Paid').map(o=>o.id));
-    const paidItems=(orderItems||[]).filter(i=>paidOrderIds.has(i.orderId));
-    const totalRevUZS=paidItems.reduce((s,i)=>s+(+i.priceUZS||0)*(+i.quantity||1),0);
-    const totalExpKRW=expenses.reduce((s,e)=>s+(+e.amountKRW||0),0);
-    const totalTransKRW=transfers.reduce((s,t)=>s+(+t.amountKRW||0),0);
-    const totalTransUZS=transfers.reduce((s,t)=>s+(+t.amountUZS||0),0);
-    const totalCapUZS=capital.reduce((s,c)=>s+(c.currency==='KRW'?(+c.amountKRW||0)*rate:(+c.amountUZS||0)),0);
-    const totalCostUZS=(totalExpKRW+totalTransKRW)*rate;
-    const netProfit=totalRevUZS-totalCostUZS;
-    // B2B breakdown
-    const b2bItems=paidItems.filter(i=>i.type==='B2B');
-    const b2cItems=paidItems.filter(i=>i.type!=='B2B');
-    const b2bRevUZS=b2bItems.reduce((s,i)=>s+(+i.priceUZS||0)*(+i.quantity||1),0);
-    const b2cRevUZS=b2cItems.reduce((s,i)=>s+(+i.priceUZS||0)*(+i.quantity||1),0);
-    const b2bShipUZS=b2bItems.reduce((s,i)=>{
-      const prod=(catalog||[]).find(p=>p.id===i.productId);
-      const shipKRW=prod?((+prod.weightGrams||0)/1000)*shipRateKRW:0;
-      return s+Math.round(shipKRW*rate)*(+i.quantity||1);
-    },0);
-    const b2bNetUZS=b2bRevUZS-b2bShipUZS;
-    return{totalRevUZS,totalExpKRW,totalTransKRW,totalTransUZS,totalCapUZS,totalCostUZS,netProfit,b2bRevUZS,b2bShipUZS,b2bNetUZS,b2cRevUZS};
-  },[orders,orderItems,expenses,transfers,capital,catalog,rate,shipRateKRW]);
+  const totalRevUZS=useMemo(()=>finEntries.filter(e=>e.type==='revenue').reduce((s,e)=>s+(+e.amountUZS||0),0),[finEntries]);
+  const totalCostKRW=useMemo(()=>finEntries.filter(e=>e.type==='cost').reduce((s,e)=>s+(+e.amountKRW||0),0),[finEntries]);
+  const totalRevKRW=Math.round(totalRevUZS/rate);
+  const netKRW=totalRevKRW-totalCostKRW;
+
+  const filtered=useMemo(()=>{
+    if(typeFilter==='All') return finEntries;
+    return finEntries.filter(e=>e.type===typeFilter);
+  },[finEntries,typeFilter]);
+
+  const save=async(data)=>{
+    setSaving(true);
+    try{
+      const payload={
+        date:data.date,
+        type:data.type,
+        amount_krw:data.type==='cost'?+data.amount||0:0,
+        amount_uzs:data.type==='revenue'?+data.amount||0:0,
+        description:data.description||null,
+      };
+      if(editEntry){
+        const{error}=await db.from('finance_entries').update(payload).eq('id',editEntry.id);
+        if(error) throw error;
+        setFinEntries(prev=>prev.map(e=>e.id===editEntry.id?fromDB.finEntry({...payload,id:editEntry.id,created_at:editEntry.createdAt}):e));
+        notify('Entry updated ✓');
+      } else {
+        const{data:nd,error}=await db.from('finance_entries').insert(payload).select().single();
+        if(error) throw error;
+        setFinEntries(prev=>[fromDB.finEntry(nd),...prev]);
+        notify(data.type==='cost'?'Cost recorded ✓':'Revenue recorded ✓');
+      }
+      setShowForm(false); setEditEntry(null);
+    }catch(e){notify('Save failed: '+e.message,'error');}
+    finally{setSaving(false);}
+  };
+
+  const del=async(id)=>{
+    if(!confirm('Delete this entry?')) return;
+    const{error}=await db.from('finance_entries').delete().eq('id',id);
+    if(error) return notify('Delete failed: '+error.message,'error');
+    setFinEntries(prev=>prev.filter(e=>e.id!==id));
+    notify('Entry deleted');
+  };
 
   return(
     <div className="space-y-4 slide-up">
-      <h2 className="font-black text-gray-800 text-xl">Finance</h2>
+      <div className="flex items-center gap-2">
+        <h2 className="font-black text-gray-800 text-xl flex-1">₩ Finance</h2>
+        <Btn size="sm" onClick={()=>{setEditEntry(null);setShowForm(true);}}>+ Add Entry</Btn>
+      </div>
 
-      {/* Summary cards */}
-      <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-        <StatBox label="Revenue (Paid)"   value={fmtUZS(totalRevUZS)}    sub="From paid orders"                color="green"/>
-        <StatBox label="Total Costs"       value={fmtKRW(totalExpKRW+totalTransKRW)} sub="Expenses + Korea transfers"  color="amber"/>
-        <StatBox label="Net Profit"       value={fmtUZS(netProfit)}      sub="Revenue − costs"                 color={netProfit>=0?'violet':'gray'}/>
-      </div>
-      <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-        <StatBox label="Sent to Korea"    value={fmtKRW(totalTransKRW)}  sub={`${fmtUZS(totalTransUZS)}`}     color="blue"/>
-        <StatBox label="Local Expenses"   value={fmtKRW(totalExpKRW)}    sub="Salary, cargo etc"               color="pink"/>
-        <StatBox label="Capital Added"    value={fmtUZS(totalCapUZS)}    sub="Total invested"                  color="violet"/>
-      </div>
-      {/* B2B breakdown */}
-      {b2bRevUZS>0&&(
-        <div className="rounded-2xl border border-indigo-100 bg-indigo-50 p-4">
-          <p className="text-xs font-black text-indigo-500 mb-3 uppercase tracking-wide">B2B Breakdown (Paid Orders)</p>
-          <div className="grid grid-cols-3 gap-3">
-            <div className="bg-white rounded-xl p-3 text-center border border-indigo-100">
-              <p className="text-xs text-gray-400 font-semibold mb-1">B2B Revenue</p>
-              <p className="font-black text-indigo-700 text-sm">{fmtUZS(b2bRevUZS)}</p>
-            </div>
-            <div className="bg-white rounded-xl p-3 text-center border border-orange-100">
-              <p className="text-xs text-gray-400 font-semibold mb-1">Shipping Cost</p>
-              <p className="font-black text-orange-500 text-sm">− {fmtUZS(b2bShipUZS)}</p>
-              <p className="text-xs text-gray-300">per product weight</p>
-            </div>
-            <div className={`rounded-xl p-3 text-center border ${b2bNetUZS>=0?'bg-white border-emerald-100':'bg-red-50 border-red-100'}`}>
-              <p className="text-xs text-gray-400 font-semibold mb-1">B2B Net Profit</p>
-              <p className={`font-black text-sm ${b2bNetUZS>=0?'text-emerald-700':'text-red-600'}`}>{fmtUZS(b2bNetUZS)}</p>
-            </div>
-          </div>
-          <p className="text-xs text-gray-400 mt-2">B2C Revenue: {fmtUZS(b2cRevUZS)}</p>
+      {/* Two balance cards */}
+      <div className="grid grid-cols-2 gap-3">
+        <div className="bg-white rounded-2xl border border-pink-50 shadow-sm p-4">
+          <p className="text-xs text-gray-400 font-bold uppercase tracking-wide mb-1">🇺🇿 UZB Cash In</p>
+          <p className="text-2xl font-black text-emerald-600">{fmtUZS(totalRevUZS)}</p>
+          <p className="text-xs text-gray-400 mt-1">≈ {fmtKRW(totalRevKRW)}</p>
         </div>
-      )}
+        <div className="bg-white rounded-2xl border border-pink-50 shadow-sm p-4">
+          <p className="text-xs text-gray-400 font-bold uppercase tracking-wide mb-1">🇰🇷 KRW Spent</p>
+          <p className="text-2xl font-black text-red-500">{fmtKRW(totalCostKRW)}</p>
+          <p className="text-xs text-gray-400 mt-1">Product purchases</p>
+        </div>
+      </div>
 
-      {/* Tabs */}
+      {/* Net KRW realization */}
+      <div className={`rounded-2xl p-4 flex items-center justify-between ${netKRW>=0?'bg-emerald-50 border border-emerald-100':'bg-red-50 border border-red-100'}`}>
+        <div>
+          <p className="text-xs font-bold text-gray-500 uppercase tracking-wide">Net Position (KRW)</p>
+          <p className="text-xs text-gray-400 mt-0.5">Revenue converted − Costs</p>
+        </div>
+        <p className={`text-2xl font-black ${netKRW>=0?'text-emerald-700':'text-red-600'}`}>{netKRW>=0?'+':''}{fmtKRW(netKRW)}</p>
+      </div>
+
+      {/* Filter */}
       <div className="flex gap-2">
-        {[['overview','Overview'],['transfers','Korea Transfers'],['expenses','Local Expenses'],['capital','Capital'],['team','Team Performance']].map(([k,l])=>(
-          <button key={k} onClick={()=>setTab(k)}
-            className={`px-4 py-2 rounded-xl text-xs font-bold transition-all ${tab===k?'bg-pink-500 text-white':'bg-white text-gray-500 border border-gray-200 hover:border-pink-300'}`}>
-            {l}
+        {['All','revenue','cost'].map(f=>(
+          <button key={f} onClick={()=>setTypeFilter(f)}
+            className={`px-4 py-1.5 rounded-xl text-xs font-bold transition-all ${typeFilter===f?'bg-pink-500 text-white':'bg-white text-gray-500 border border-gray-200 hover:border-pink-300'}`}>
+            {f==='All'?'All':f==='revenue'?'Revenue':'Cost'}
           </button>
         ))}
       </div>
 
-      {tab==='overview'&&<FinanceOverview expenses={expenses} transfers={transfers} capital={capital} orders={orders} orderItems={orderItems} settings={settings}/>}
-      {tab==='transfers'&&<TransfersTab transfers={transfers} setTransfers={setTransfers} notify={notify}/>}
-      {tab==='expenses'&&<ExpensesTab expenses={expenses} setExpenses={setExpenses} settings={settings} notify={notify}/>}
-      {tab==='capital'&&<CapitalTab capital={capital} setCapital={setCapital} notify={notify}/>}
-      {tab==='team'&&<TeamTab orders={orders} orderItems={orderItems} settings={settings}/>}
-    </div>
-  );
-}
-
-function FinanceOverview({expenses,transfers,capital,orders,orderItems,settings}) {
-  const rate=+settings.uzsPerKrw||8;
-  const months={};
-  const getM=(date)=>date?.slice(0,7)||'Unknown';
-  const addMonth=(m,key,val)=>{
-    if(!months[m]) months[m]={costKRW:0,costUZS:0,revUZS:0};
-    months[m][key]+=val||0;
-  };
-  expenses.forEach(e=>{ addMonth(getM(e.date),'costKRW',+e.amountKRW); addMonth(getM(e.date),'costUZS',+e.amountKRW*rate); });
-  transfers.forEach(t=>{ addMonth(getM(t.date),'costKRW',+t.amountKRW); addMonth(getM(t.date),'costUZS',+t.amountKRW*rate); });
-
-  // Revenue from paid orders grouped by month
-  const paidIds=new Set((orders||[]).filter(o=>o.paymentStatus==='Paid').map(o=>o.id));
-  const orderMap={};
-  (orders||[]).forEach(o=>{orderMap[o.id]=o;});
-  (orderItems||[]).filter(i=>paidIds.has(i.orderId)).forEach(i=>{
-    const o=orderMap[i.orderId];
-    const m=getM(o?.createdAt);
-    addMonth(m,'revUZS',(+i.priceUZS||0)*(+i.quantity||1));
-  });
-
-  const sortedMonths=Object.entries(months).sort((a,b)=>b[0].localeCompare(a[0])).slice(0,12);
-
-  return(
-    <div className="space-y-3">
-      {sortedMonths.length===0
-        ?<Card className="p-6 text-center text-gray-400">No financial data yet. Add transfers and expenses.</Card>
+      {/* Transaction list */}
+      {filtered.length===0
+        ?<Empty icon="₩" title="No entries yet" sub="Record costs when buying and revenue when collecting cash"/>
         :<TblWrap>
-          <thead><tr><th>Month</th><th>Revenue (UZS)</th><th>Costs (KRW)</th><th>≈ Cost (UZS)</th><th>Profit (UZS)</th></tr></thead>
+          <thead><tr><th>Date</th><th>Type</th><th>Amount</th><th>Description</th><th></th></tr></thead>
           <tbody>
-            {sortedMonths.map(([m,v])=>{
-              const profit=v.revUZS-v.costUZS;
-              return(
-                <tr key={m}>
-                  <td className="font-bold text-gray-700">{fmtMonth(m)}</td>
-                  <td className="font-black text-emerald-600">{v.revUZS>0?fmtUZS(v.revUZS):'—'}</td>
-                  <td className="font-semibold text-gray-700">{fmtKRW(v.costKRW)}</td>
-                  <td className="text-gray-500">{fmtUZS(v.costUZS)}</td>
-                  <td className={`font-black ${profit>=0?'text-violet-600':'text-red-500'}`}>{v.revUZS>0?(profit>=0?'+':'')+fmtUZS(profit):'—'}</td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </TblWrap>
-      }
-    </div>
-  );
-}
-
-function TransfersTab({transfers,setTransfers,notify}) {
-  const [showForm,setShowForm]=useState(false);
-  const [editT,   setEditT]   =useState(null);
-  const [saving,  setSaving]  =useState(false);
-
-  const save=async(data)=>{
-    setSaving(true);
-    try{
-      if(editT){
-        const{error}=await db.from('transfers').update(toDB.transfer(data)).eq('id',editT.id);
-        if(error) throw error;
-        setTransfers(prev=>prev.map(t=>t.id===editT.id?{...t,...data}:t));
-        notify('Transfer updated ✓');
-      } else {
-        const{data:nd,error}=await db.from('transfers').insert(toDB.transfer(data)).select().single();
-        if(error) throw error;
-        setTransfers(prev=>[fromDB.transfer(nd),...prev]);
-        notify('Transfer recorded ✓');
-      }
-      setShowForm(false); setEditT(null);
-    }catch(e){notify('Save failed: '+e.message,'error');}
-    finally{setSaving(false);}
-  };
-
-  const del=async(id)=>{
-    if(!confirm('Delete this transfer?')) return;
-    const{error}=await db.from('transfers').delete().eq('id',id);
-    if(error) return notify('Delete failed: '+error.message,'error');
-    setTransfers(prev=>prev.filter(t=>t.id!==id));
-    notify('Transfer deleted');
-  };
-
-  return(
-    <div className="space-y-3">
-      <div className="flex justify-end"><Btn size="sm" onClick={()=>setShowForm(true)}>+ Add Transfer</Btn></div>
-      {transfers.length===0
-        ?<Empty icon="💸" title="No transfers yet" sub="Record money sent to Korea"/>
-        :<TblWrap>
-          <thead><tr><th>Date</th><th>Amount (KRW)</th><th>Amount Spent (UZS)</th><th>Notes</th><th></th></tr></thead>
-          <tbody>
-            {transfers.map(t=>(
-              <tr key={t.id}>
-                <td className="text-gray-400 text-xs">{fmtDate(t.date)}</td>
-                <td className="font-black text-blue-600">{fmtKRW(t.amountKRW)}</td>
-                <td className="font-bold text-gray-700">{t.amountUZS?fmtUZS(t.amountUZS):'—'}</td>
-                <td className="text-gray-500 text-sm">{t.notes||'—'}</td>
-                <td><div className="flex gap-1">
-                  <Btn size="xs" variant="ghost" onClick={()=>{setEditT(t);setShowForm(true);}}>✎</Btn>
-                  <Btn size="xs" variant="danger" onClick={()=>del(t.id)}>✕</Btn>
-                </div></td>
-              </tr>
-            ))}
-          </tbody>
-        </TblWrap>
-      }
-      {showForm&&(
-        <Modal title={editT?'Edit Transfer':'Transfer to Korea'} onClose={()=>{setShowForm(false);setEditT(null);}}>
-          <TransferForm transfer={editT} onSave={save} saving={saving}/>
-        </Modal>
-      )}
-    </div>
-  );
-}
-
-function TransferForm({transfer,onSave,saving}) {
-  const [form,setForm]=useState({date:transfer?.date||today(),amountKRW:transfer?.amountKRW||'',amountUZS:transfer?.amountUZS||'',notes:transfer?.notes||''});
-  const f=(k,v)=>setForm(p=>({...p,[k]:v}));
-  return(
-    <div className="space-y-3">
-      <Inp label="Date" required type="date" value={form.date} onChange={e=>f('date',e.target.value)}/>
-      <div className="grid grid-cols-2 gap-3">
-        <Inp label="Amount Sent (KRW)" required type="number" min="0" value={form.amountKRW} onChange={e=>f('amountKRW',e.target.value)} placeholder="500000"/>
-        <Inp label="UZS Spent" type="number" min="0" value={form.amountUZS} onChange={e=>f('amountUZS',e.target.value)} placeholder="4000000"/>
-      </div>
-      <Inp label="Notes" value={form.notes} onChange={e=>f('notes',e.target.value)} placeholder="e.g. 2nd batch April"/>
-      <Btn size="lg" onClick={()=>{if(!form.amountKRW)return alert('Enter KRW amount.');onSave(form);}} loading={saving}>✓ Save Transfer</Btn>
-    </div>
-  );
-}
-
-function ExpensesTab({expenses,setExpenses,settings,notify}) {
-  const [showForm, setShowForm] =useState(false);
-  const [editE,    setEditE]    =useState(null);
-  const [saving,   setSaving]   =useState(false);
-  const sp=settings.salespersons||[];
-
-  const save=async(data)=>{
-    setSaving(true);
-    try{
-      if(editE){
-        const{error}=await db.from('expenses').update(toDB.expense(data)).eq('id',editE.id);
-        if(error) throw error;
-        setExpenses(prev=>prev.map(e=>e.id===editE.id?{...e,...data}:e));
-        notify('Expense updated ✓');
-      } else {
-        const{data:nd,error}=await db.from('expenses').insert(toDB.expense(data)).select().single();
-        if(error) throw error;
-        setExpenses(prev=>[fromDB.expense(nd),...prev]);
-        notify('Expense added ✓');
-      }
-      setShowForm(false); setEditE(null);
-    }catch(e){notify('Save failed: '+e.message,'error');}
-    finally{setSaving(false);}
-  };
-
-  const del=async(id)=>{
-    if(!confirm('Delete this expense?')) return;
-    const{error}=await db.from('expenses').delete().eq('id',id);
-    if(error) return notify('Delete failed: '+error.message,'error');
-    setExpenses(prev=>prev.filter(e=>e.id!==id));
-    notify('Expense deleted');
-  };
-
-  const total=expenses.reduce((s,e)=>s+(+e.amountKRW||0),0);
-
-  return(
-    <div className="space-y-3">
-      <div className="flex items-center justify-between">
-        <p className="text-sm text-gray-500">Total: <span className="font-black text-red-500">{fmtKRW(total)}</span></p>
-        <Btn size="sm" onClick={()=>setShowForm(true)}>+ Add Expense</Btn>
-      </div>
-      {expenses.length===0
-        ?<Empty icon="💰" title="No expenses" sub="Record salary, cargo, packaging costs"/>
-        :<TblWrap>
-          <thead><tr><th>Date</th><th>Type</th><th>Description</th><th>Amount (KRW)</th><th>Paid By</th><th></th></tr></thead>
-          <tbody>
-            {expenses.map(e=>(
+            {filtered.map(e=>(
               <tr key={e.id}>
-                <td className="text-gray-400 text-xs">{fmtDate(e.date)}</td>
-                <td><span className="text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full font-bold">{e.type}</span></td>
-                <td className="font-semibold text-gray-800">{e.description}</td>
-                <td className="font-black text-red-500">{fmtKRW(e.amountKRW)}</td>
-                <td className="text-gray-500 text-xs">{e.paidBy||'—'}</td>
+                <td className="text-gray-400 text-xs whitespace-nowrap">{fmtDate(e.date)}</td>
+                <td>
+                  {e.type==='revenue'
+                    ?<span className="text-xs bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded-full font-bold">Revenue</span>
+                    :<span className="text-xs bg-red-100 text-red-600 px-2 py-0.5 rounded-full font-bold">Cost</span>}
+                </td>
+                <td className={`font-black whitespace-nowrap ${e.type==='revenue'?'text-emerald-600':'text-red-500'}`}>
+                  {e.type==='revenue'?fmtUZS(e.amountUZS):fmtKRW(e.amountKRW)}
+                </td>
+                <td className="text-gray-600 text-sm">{e.description||'—'}</td>
                 <td><div className="flex gap-1">
-                  <Btn size="xs" variant="ghost" onClick={()=>{setEditE(e);setShowForm(true);}}>✎</Btn>
+                  <Btn size="xs" variant="ghost" onClick={()=>{setEditEntry(e);setShowForm(true);}}>✎</Btn>
                   <Btn size="xs" variant="danger" onClick={()=>del(e.id)}>✕</Btn>
                 </div></td>
               </tr>
@@ -1763,196 +1608,42 @@ function ExpensesTab({expenses,setExpenses,settings,notify}) {
           </tbody>
         </TblWrap>
       }
+
       {showForm&&(
-        <Modal title={editE?'Edit Expense':'New Expense'} onClose={()=>{setShowForm(false);setEditE(null);}}>
-          <div className="space-y-3">
-            <ExpenseFormInner expense={editE} onSave={save} saving={saving} salespersons={sp}/>
-          </div>
+        <Modal title={editEntry?'Edit Entry':'New Entry'} onClose={()=>{setShowForm(false);setEditEntry(null);}}>
+          <FinanceEntryForm entry={editEntry} onSave={save} saving={saving}/>
         </Modal>
       )}
     </div>
   );
 }
 
-function ExpenseFormInner({expense,onSave,saving,salespersons}) {
-  const sp=salespersons||[];
-  const [form,setForm]=useState({date:expense?.date||today(),type:expense?.type||'Salary',description:expense?.description||'',amountKRW:expense?.amountKRW||'',paidBy:expense?.paidBy||sp[0]||''});
-  const f=(k,v)=>setForm(p=>({...p,[k]:v}));
-  return(
-    <div className="space-y-3">
-      <div className="grid grid-cols-2 gap-3">
-        <Inp label="Date" required type="date" value={form.date} onChange={e=>f('date',e.target.value)}/>
-        <Sel label="Type" required value={form.type} onChange={e=>f('type',e.target.value)}>{EXP_TYPES.map(t=><option key={t}>{t}</option>)}</Sel>
-      </div>
-      <Inp label="Description" required value={form.description} onChange={e=>f('description',e.target.value)} placeholder="e.g. Monthly salary Nazokat"/>
-      <Inp label="Amount (KRW)" required type="number" min="0" value={form.amountKRW} onChange={e=>f('amountKRW',e.target.value)} placeholder="50000"/>
-      <div>
-        <label className="block text-xs font-bold text-gray-500 mb-1">Paid By</label>
-        <input list="sp-list" value={form.paidBy} onChange={e=>f('paidBy',e.target.value)} className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm bg-gray-50"/>
-        <datalist id="sp-list">{sp.map(s=><option key={s} value={s}/>)}</datalist>
-      </div>
-      <Btn size="lg" onClick={()=>{if(!form.description.trim()||!form.amountKRW)return alert('Fill required fields.');onSave(form);}} loading={saving}>✓ Save Expense</Btn>
-    </div>
-  );
-}
-
-function CapitalTab({capital,setCapital,notify}) {
-  const [showForm,setShowForm]=useState(false);
-  const [editC,   setEditC]   =useState(null);
-  const [saving,  setSaving]  =useState(false);
-
-  const save=async(data)=>{
-    setSaving(true);
-    try{
-      if(editC){
-        const{error}=await db.from('capital').update(toDB.capital(data)).eq('id',editC.id);
-        if(error) throw error;
-        setCapital(prev=>prev.map(c=>c.id===editC.id?fromDB.capital({...c,amount_krw:data.currency==='KRW'?+data.amount:0,amount_uzs:data.currency==='UZS'?+data.amount:0,date:data.date,person:data.person,notes:data.notes}):c));
-        notify('Capital updated ✓');
-      } else {
-        const{data:nd,error}=await db.from('capital').insert(toDB.capital(data)).select().single();
-        if(error) throw error;
-        setCapital(prev=>[fromDB.capital(nd),...prev]);
-        notify('Capital recorded ✓');
-      }
-      setShowForm(false); setEditC(null);
-    }catch(e){notify('Save failed: '+e.message,'error');}
-    finally{setSaving(false);}
-  };
-
-  const del=async(id)=>{
-    if(!confirm('Delete this capital entry?')) return;
-    const{error}=await db.from('capital').delete().eq('id',id);
-    if(error) return notify('Delete failed: '+error.message,'error');
-    setCapital(prev=>prev.filter(c=>c.id!==id));
-    notify('Capital entry deleted');
-  };
-
-  const totalKRW=capital.filter(c=>c.currency==='KRW').reduce((s,c)=>s+(+c.amountKRW||0),0);
-  const totalUZS=capital.filter(c=>c.currency==='UZS').reduce((s,c)=>s+(+c.amountUZS||0),0);
-
-  return(
-    <div className="space-y-3">
-      <div className="flex items-center justify-between">
-        <div className="flex gap-3 text-sm">
-          {totalKRW>0&&<span className="text-gray-500">KRW: <span className="font-black text-blue-600">{fmtKRW(totalKRW)}</span></span>}
-          {totalUZS>0&&<span className="text-gray-500">UZS: <span className="font-black text-violet-600">{fmtUZS(totalUZS)}</span></span>}
-          {totalKRW===0&&totalUZS===0&&<span className="text-gray-400 text-xs">No capital yet</span>}
-        </div>
-        <Btn size="sm" onClick={()=>setShowForm(true)}>+ Add Capital</Btn>
-      </div>
-      {capital.length===0
-        ?<Empty icon="💼" title="No capital entries" sub="Record money added to the business"/>
-        :<TblWrap>
-          <thead><tr><th>Date</th><th>Amount</th><th>Currency</th><th>Person</th><th>Notes</th><th></th></tr></thead>
-          <tbody>
-            {capital.map(c=>(
-              <tr key={c.id}>
-                <td className="text-gray-400 text-xs">{fmtDate(c.date)}</td>
-                <td className="font-black text-violet-600">{c.currency==='KRW'?fmtKRW(c.amountKRW):fmtUZS(c.amountUZS)}</td>
-                <td><span className={`text-xs font-bold px-2 py-0.5 rounded-full ${c.currency==='KRW'?'bg-blue-100 text-blue-600':'bg-purple-100 text-purple-600'}`}>{c.currency}</span></td>
-                <td className="font-semibold text-gray-700">{c.person||'—'}</td>
-                <td className="text-gray-500 text-sm">{c.notes||'—'}</td>
-                <td><div className="flex gap-1">
-                  <Btn size="xs" variant="ghost" onClick={()=>{setEditC(c);setShowForm(true);}}>✎</Btn>
-                  <Btn size="xs" variant="danger" onClick={()=>del(c.id)}>✕</Btn>
-                </div></td>
-              </tr>
-            ))}
-          </tbody>
-        </TblWrap>
-      }
-      {showForm&&(
-        <Modal title={editC?'Edit Capital':'Add Capital'} onClose={()=>{setShowForm(false);setEditC(null);}}>
-          <div className="space-y-3">
-            <CapitalForm capital={editC} onSave={save} saving={saving}/>
-          </div>
-        </Modal>
-      )}
-    </div>
-  );
-}
-
-function CapitalForm({capital,onSave,saving}) {
+function FinanceEntryForm({entry,onSave,saving}) {
   const [form,setForm]=useState({
-    date:capital?.date||today(),
-    amount:capital?(capital.currency==='KRW'?capital.amountKRW:capital.amountUZS):'',
-    currency:capital?.currency||'KRW',
-    person:capital?.person||'',
-    notes:capital?.notes||'',
+    date:entry?.date||today(),
+    type:entry?.type||'cost',
+    amount:entry?(entry.type==='cost'?entry.amountKRW:entry.amountUZS):'',
+    description:entry?.description||'',
   });
   const f=(k,v)=>setForm(p=>({...p,[k]:v}));
   return(
-    <div className="space-y-3">
-      <Inp label="Date" required type="date" value={form.date} onChange={e=>f('date',e.target.value)}/>
-      <div>
-        <label className="block text-xs font-bold text-gray-500 mb-1">Amount <span className="text-pink-500">*</span></label>
-        <div className="flex gap-2">
-          <div className="flex rounded-xl border border-gray-200 overflow-hidden text-sm font-bold">
-            <button type="button" onClick={()=>f('currency','KRW')}
-              className={`px-3 py-2 transition-all ${form.currency==='KRW'?'bg-pink-500 text-white':'bg-gray-50 text-gray-400 hover:bg-gray-100'}`}>
-              KRW ₩
-            </button>
-            <button type="button" onClick={()=>f('currency','UZS')}
-              className={`px-3 py-2 transition-all ${form.currency==='UZS'?'bg-pink-500 text-white':'bg-gray-50 text-gray-400 hover:bg-gray-100'}`}>
-              UZS
-            </button>
-          </div>
-          <input type="number" min="0" value={form.amount} onChange={e=>f('amount',e.target.value)}
-            placeholder={form.currency==='KRW'?'500000':'5000000'}
-            className="flex-1 border border-gray-200 rounded-xl px-3 py-2 text-sm bg-gray-50 focus:border-pink-400 focus:outline-none"/>
-        </div>
-        {form.amount&&<p className="text-xs text-gray-400 mt-1">
-          {form.currency==='KRW'?fmtKRW(+form.amount):fmtUZS(+form.amount)}
-        </p>}
+    <div className="space-y-4">
+      <div className="flex gap-2">
+        <button onClick={()=>f('type','cost')}
+          className={`flex-1 py-3 rounded-xl font-black text-sm border-2 transition-all ${form.type==='cost'?'bg-red-50 border-red-400 text-red-600':'bg-white border-gray-200 text-gray-400 hover:border-gray-300'}`}>
+          ₩ Cost (KRW)
+        </button>
+        <button onClick={()=>f('type','revenue')}
+          className={`flex-1 py-3 rounded-xl font-black text-sm border-2 transition-all ${form.type==='revenue'?'bg-emerald-50 border-emerald-400 text-emerald-600':'bg-white border-gray-200 text-gray-400 hover:border-gray-300'}`}>
+          💵 Revenue (UZS)
+        </button>
       </div>
-      <Inp label="Person" value={form.person} onChange={e=>f('person',e.target.value)} placeholder="Who added the money"/>
-      <Inp label="Notes" value={form.notes} onChange={e=>f('notes',e.target.value)} placeholder="e.g. Initial investment"/>
+      <Inp label="Date" type="date" value={form.date} onChange={e=>f('date',e.target.value)}/>
+      <Inp label={form.type==='cost'?'Amount (KRW)':'Amount (UZS)'} type="number" min="0" value={form.amount}
+        onChange={e=>f('amount',e.target.value)} placeholder={form.type==='cost'?'e.g. 500000':'e.g. 4000000'}/>
+      <Inp label="Description" value={form.description} onChange={e=>f('description',e.target.value)}
+        placeholder={form.type==='cost'?'e.g. Bought COSRX batch':'e.g. Collected from customers'}/>
       <Btn size="lg" onClick={()=>{if(!form.amount)return alert('Enter amount.');onSave(form);}} loading={saving}>✓ Save</Btn>
-    </div>
-  );
-}
-
-// ── TEAM PERFORMANCE TAB ──────────────────────────────────────
-function TeamTab({orders,orderItems,settings}) {
-  const rate=+settings.uzsPerKrw||8;
-  const stats=useMemo(()=>{
-    const map={};
-    orders.forEach(o=>{
-      const sp=o.salesperson||'Unassigned';
-      if(!map[sp]) map[sp]={name:sp,total:0,paid:0,revenue:0,statuses:{}};
-      map[sp].total+=1;
-      if(o.paymentStatus==='Paid') map[sp].paid+=1;
-      ORDER_STATUSES.forEach(s=>{ map[sp].statuses[s]=(map[sp].statuses[s]||0)+(o.status===s?1:0); });
-    });
-    const paidIds=new Set(orders.filter(o=>o.paymentStatus==='Paid').map(o=>o.id));
-    orderItems.filter(i=>paidIds.has(i.orderId)).forEach(i=>{
-      const o=orders.find(x=>x.id===i.orderId);
-      const sp=o?.salesperson||'Unassigned';
-      if(map[sp]) map[sp].revenue+=(+i.priceUZS||0)*(+i.quantity||1);
-    });
-    return Object.values(map).sort((a,b)=>b.revenue-a.revenue);
-  },[orders,orderItems]);
-
-  if(stats.length===0) return <Card className="p-6 text-center text-gray-400">No orders with salesperson assigned yet.</Card>;
-  return(
-    <div className="space-y-3">
-      <TblWrap>
-        <thead><tr><th>Salesperson</th><th>Total Orders</th><th>Paid Orders</th><th>Revenue (Paid)</th><th>Pending</th><th>Shipped</th><th>Delivered</th></tr></thead>
-        <tbody>
-          {stats.map(s=>(
-            <tr key={s.name}>
-              <td className="font-bold text-gray-800">{s.name}</td>
-              <td className="text-center font-bold text-gray-700">{s.total}</td>
-              <td className="text-center font-bold text-emerald-600">{s.paid}</td>
-              <td className="font-black text-emerald-600">{s.revenue>0?fmtUZS(s.revenue):'—'}</td>
-              <td className="text-center text-amber-600 font-bold">{s.statuses.Pending||0}</td>
-              <td className="text-center text-violet-600 font-bold">{s.statuses.Shipped||0}</td>
-              <td className="text-center text-green-600 font-bold">{s.statuses.Delivered||0}</td>
-            </tr>
-          ))}
-        </tbody>
-      </TblWrap>
     </div>
   );
 }
