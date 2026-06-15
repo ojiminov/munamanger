@@ -1,4 +1,4 @@
-const CACHE = 'muna-v2';
+const CACHE = 'muna-v3';
 const STATIC = ['./icon-192.png', './icon-512.png', './manifest.json'];
 
 self.addEventListener('install', e => {
